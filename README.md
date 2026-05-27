@@ -167,10 +167,12 @@ and routing each piece to its **own** cheapest member — is demonstrated, and v
 exact, in [`hybrid-dispatcher/`](hybrid-dispatcher/): it cuts a circuit into pieces,
 routes each piece independently, and pays only for the few gates connecting them.
 Strikingly, a circuit with **no single cheap method as a whole** can split into
-halves that are each easy along a *different* axis. One half is already executed on a
-real **phase-aware stabilizer engine** (with exact global phase, so the cut still
-recombines to the verified answer); running the other half on its native polynomial
-free-fermion engine is the one remaining drop-in.
+halves that are each easy along a *different* axis — and each half is run on its own
+real engine: a **phase-aware stabilizer engine** for the Clifford half and a
+**free-fermion engine** (pairing matrix + Pfaffian amplitudes) for the matchgate
+half, both phase-exact so the cut recombines to the verified answer. The natural
+refinement from here is amplitude-level recombination (never materialising a full
+block vector) for the full asymptotic win.
 
 ## What's inside
 
@@ -191,7 +193,7 @@ namesake), [`ising-phase-transition/`](ising-phase-transition/),
 | [`network_reliability.py`](network-reliability/network_reliability.py) | **Compute the exact risk of a large simultaneous outage** in a planar utility/telecom grid when failures are **correlated** (a storm takes out neighbouring lines together). Assuming failures are independent **badly underestimates that risk**; sampling never sees the rare, costly tail. | the **exact** probability of a major outage, where Monte-Carlo reports **zero** |
 | [`roster_solution_space.py`](roster-counting/roster_solution_space.py) | **Count and audit *all* valid staff rosters at once** — how many exist, is the schedule forced, which assignment is a **single point of failure** — instead of just finding one. Schedulers return one answer; **the whole solution space is assumed too big to explore**. | the **exact** count of valid rosters — a ~**50-digit** number — in ~0.5 s, where enumeration could never finish |
 | [`simulator_router.py`](simulator-router/simulator_router.py) | **Given a quantum circuit, work out *which* of the methods above can simulate it cheaply** — by measuring how far it sits from each kind of "easy structure" (how many non-Clifford gates, how many interacting gates, how much entanglement). A **map from a problem to the right tool**, tying the whole landscape table together. | **routes each circuit to its cheapest simulator automatically** — and flags the ones where **no** classical method is cheap (the genuinely-quantum regime) |
-| [`hybrid_dispatcher.py`](hybrid-dispatcher/hybrid_dispatcher.py) | **Don't pick one simulator — cut the problem and route each piece to its own.** Cut a circuit into pieces, send each piece to *its* cheapest method (one half actually runs on a real **phase-aware stabilizer engine**), and **pay only for the few gates that connect them** (circuit cutting / the method Google used to verify Sycamore). A circuit with **no single cheap method** can split into halves that are each easy — along *different* axes. | the **exact** answer for a circuit that is hopeless as a whole — ~160× cheaper than brute force — verified to machine precision |
+| [`hybrid_dispatcher.py`](hybrid-dispatcher/hybrid_dispatcher.py) | **Don't pick one simulator — cut the problem and route each piece to its own.** Cut a circuit into pieces, send each piece to *its* cheapest method and **run it there** — one half on a real **phase-aware stabilizer engine**, the other on a real **free-fermion engine** — paying only for the few gates that connect them (circuit cutting / the method Google used to verify Sycamore). A circuit with **no single cheap method** can split into halves that are each easy — along *different* axes. | the **exact** answer for a circuit that is hopeless as a whole — ~160× cheaper than brute force — verified to machine precision |
 
 ## Quick start
 
@@ -215,6 +217,7 @@ python roster_solution_space.py
 
 cd ../simulator-router           # pick the cheapest simulator for a given circuit
 python simulator_router.py
+python feasibility_advisor.py    # dev-friendly "can I run this, and how?" (no physics needed)
 
 cd ../hybrid-dispatcher          # split a circuit across simulators, pay for the cut
 python hybrid_dispatcher.py

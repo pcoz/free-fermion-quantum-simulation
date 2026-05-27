@@ -17,6 +17,37 @@ python simulator_router.py examples/clifford_t.qasm   # route YOUR own circuit
 
 Pure Python, no dependencies.
 
+## For developers (no quantum physics required)
+
+If you just want to know *"can I run this circuit on my machine, and how?"*, use the
+plain-English front-end [`feasibility_advisor.py`](feasibility_advisor.py). It wraps
+the router and, for any circuit, tells you which off-the-shelf simulator to reach
+for, roughly how long it would take, whether it fits in memory, and a one-line
+jargon-free reason — plus a clear verdict: laptop job / workstation job / cluster job
+/ not feasible classically (i.e. genuinely needs a quantum computer).
+
+```bash
+python feasibility_advisor.py                        # advise on a batch of circuits
+python feasibility_advisor.py examples/clifford_t.qasm   # advise on YOUR own circuit
+```
+
+Sample output:
+
+```
+circuit: error-correction-style circuit (Clifford)  (500 qubits, ...)
+  -> verdict     : LAPTOP JOB -- runs almost instantly.
+  -> best tool   : a stabilizer simulator (e.g. Stim, or Qiskit StabilizerState)
+  -> why         : only 0 of your gates are the 'hard' kind for this simulator ...
+
+circuit: deep, dense, general-purpose circuit  (60 qubits, ...)
+  -> verdict     : NOT FEASIBLE CLASSICALLY -- this is what real quantum hardware is for.
+  -> rough cost  : ~2^60 operations (longer than the age of the universe)
+  -> memory note : a state vector needs 16384.0 PB of RAM
+```
+
+You don't need to understand free fermions, stabilizers, or matchgates — the advisor
+reads the structure for you and names the right tool.
+
 ## How it routes
 
 It computes three honest structural meters and compares four cost estimates:

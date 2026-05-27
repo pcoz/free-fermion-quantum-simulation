@@ -2,45 +2,53 @@ r"""The hybrid dispatcher: cut a problem, then route each piece to its own simul
 
 This is the sequel to `../simulator-router/`. The router answers "which single
 simulator is cheapest for this whole circuit?" Here we close the loop: **cut the
-circuit into pieces and route each piece to its OWN cheapest simulator**, paying an
-exponential price only in the small "hard part" that connects the pieces -- and we
-actually run one half on a real stabilizer engine.
+circuit into pieces and route each piece to its OWN cheapest simulator**, and we run
+*both* halves on real structured engines -- a phase-aware stabilizer engine and a
+free-fermion engine -- paying an exponential price only in the small "hard part"
+that connects the pieces.
 
 Two ideas combine:
 
-1. Circuit cutting (a.k.a. circuit knitting / the Schrodinger-Feynman method, what
-   Google used to verify Sycamore classically). Split the qubits into halves A and
-   B; only a few gates cross between them. We expand each crossing two-qubit gate in
-   the **Pauli basis**, G = sum_{P,Q} c_{PQ} P (x) Q. Substituting and expanding, the
-   whole circuit becomes a sum over "branches", and in every branch the gates split
-   cleanly into an A-only and a B-only circuit:
+1. Circuit cutting (circuit knitting / the Schrodinger-Feynman method, what Google
+   used to verify Sycamore classically). Split the qubits into halves A and B; only
+   a few gates cross between them. We expand each crossing gate in the Pauli basis,
+   G = sum_{P,Q} c_{PQ} P (x) Q. Expanding, the whole circuit becomes a sum over
+   "branches", and in every branch the gates factorise into an A-only and a B-only
+   circuit:
 
-       |psi_full>  =  sum over branches of   coeff * |psi_A^branch> (x) |psi_B^branch> ,
+       |psi_full>  =  sum over branches of   coeff * |psi_A^branch> (x) |psi_B^branch> .
 
-   an EXACT identity. The Pauli basis is chosen on purpose: the factor injected into
-   each block is a Pauli, so block A stays a *Clifford* circuit (a stabilizer
-   simulator can run it) and block B stays a matchgate-plus-Pauli circuit. You pay
-   only in the cut; the price of the Pauli basis is a few more branches (4 per CNOT).
+   We cut with CZ gates on purpose: their Pauli decomposition injects only I or Z
+   into each block (a diagonal factor), so block A stays Clifford AND block B stays
+   a free-fermion (matchgate) circuit -- each piece remains inside its member's gate
+   set, and each block state factorises as (a fixed base state) with a sign mask.
 
-2. Per-block routing + a real per-block engine. Once cut, each half is its own
-   circuit, so we route it to its cheapest member -- and here block A is actually
-   executed by a phase-aware stabilizer engine, not the universal one.
+2. Per-block routing with real per-block engines. Block A is run on a phase-aware
+   stabilizer engine; block B is run on a free-fermion engine.
 
-The punchline: a circuit can have **no single cheap method as a whole**, yet split
-into halves that are each easy along a **different axis**. The demo is exactly that
--- a Clifford half welded to a free-fermion half.
+The punchline: a circuit with **no single cheap method as a whole** splits into
+halves that are each easy along a **different axis** -- a Clifford half and a
+free-fermion half.
 
-Why the stabilizer engine has to be phase-aware
------------------------------------------------
+The engines, and why they are phase-aware
+-----------------------------------------
 The recombination sums |psi_A> (x) |psi_B> over branches, so each block state must
-carry its correct GLOBAL phase -- otherwise the branches interfere wrongly. A bare
-stabilizer tableau is poly-time but fixes the state only up to a global phase, which
-is exactly the information the cut needs. So block A is run with a stabilizer engine
-in the explicit-superposition representation: it keeps the state as its (sparse)
-amplitudes over the affine stabilizer support, which is phase-exact and compresses
-to 2^(support) entries -- a genuine saving for low-Hadamard Clifford blocks (the demo
-block A spreads over 2^3, not 2^10). Getting poly-always AND phase-exact is the
-CH-form; this representation is the phase-exact, easy-to-verify version of it.
+carry its correct GLOBAL phase, or the branches interfere wrongly.
+
+* Stabilizer (block A): the explicit stabilizer-superposition representation -- the
+  state as its sparse amplitudes over the affine support. Phase-exact; compresses to
+  2^(support) (block A spreads over 2^3, not 2^10).
+* Free fermion (block B): the FERMIONIC GAUSSIAN representation -- the m x m pairing
+  matrix A with |psi> proportional to exp(1/2 sum A_ij a_i^dag a_j^dag)|0> (Thouless
+  form). Matchgates update A in closed form (number-conserving gates by congruence
+  A -> W A W^T; an initial disjoint pairing layer sets A directly), and the vacuum
+  amplitude <0|psi> is tracked exactly to fix the global phase. Amplitudes are
+  Pfaffians: <x|psi> = <0|psi> * Pf(A[occupied modes of x]). This is phase-exact and
+  the pairing matrix is the genuine poly object; reconstructing the full vector here
+  costs one Pfaffian per amplitude (the readout).
+
+Both engines are validated by self-tests against the universal backend on random
+circuits, exactly (global phase included), before the dispatcher runs.
 
 Run:  python hybrid_dispatcher.py
 """
@@ -51,7 +59,7 @@ from collections import defaultdict
 import numpy as np
 
 
-# --- a minimal, correct state-vector backend (brute force + block B) ----------
+# --- a minimal, correct state-vector backend (brute force) --------------------
 # Convention: qubit 0 is the most significant bit, so kron(state_A, state_B) places
 # the A qubits before the B qubits -- exactly the contiguous A | B split we cut on.
 def apply_1q(psi, U, q):
@@ -72,17 +80,18 @@ def run_statevector(m, ops):
     return psi.reshape(-1)
 
 
-# --- gate library (matrices + names; names drive routing and the stabilizer engine)
+# --- gate library ------------------------------------------------------------
 H = np.array([[1, 1], [1, -1]], dtype=complex) / math.sqrt(2)
 S = np.array([[1, 0], [0, 1j]], dtype=complex)
-I2 = np.eye(2, dtype=complex)
 PX = np.array([[0, 1], [1, 0]], dtype=complex)
 PY = np.array([[0, -1j], [1j, 0]], dtype=complex)
 PZ = np.array([[1, 0], [0, -1]], dtype=complex)
+I2 = np.eye(2, dtype=complex)
 PAULI = {"I": I2, "X": PX, "Y": PY, "Z": PZ}
 
 CNOT = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]], dtype=complex)
 CZ = np.diag([1, 1, 1, -1]).astype(complex)
+FSWAP = np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, -1]], dtype=complex)
 
 
 def rz(theta):
@@ -90,28 +99,25 @@ def rz(theta):
 
 
 def xx_yy(theta):
-    """exp(-i theta/2 (XX + YY)) -- an XY / Givens rotation; a genuine matchgate."""
+    """exp(-i th/2 (XX+YY)) -- hopping; number-conserving matchgate."""
     c, s = math.cos(theta), math.sin(theta)
     return np.array([[1, 0, 0, 0], [0, c, -1j * s, 0], [0, -1j * s, c, 0], [0, 0, 0, 1]], dtype=complex)
 
 
-FSWAP = np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, -1]], dtype=complex)
+def pair_gate(theta):
+    """exp(-i th/2 (XX-YY)) -- pairing; creates/annihilates a pair (mixes |00>,|11>)."""
+    c, s = math.cos(theta), math.sin(theta)
+    return np.array([[c, 0, 0, -1j * s], [0, 1, 0, 0], [0, 0, 1, 0], [-1j * s, 0, 0, c]], dtype=complex)
 
 
-# --- a phase-aware stabilizer engine (explicit-superposition representation) ---
+# --- phase-aware stabilizer engine (explicit-superposition representation) ----
 class StabilizerSim:
-    """Phase-EXACT Clifford simulator. The state is held as its sparse amplitudes
-    over the affine stabilizer support: a dict {basis state -> amplitude}. For a
-    Clifford circuit this support is an affine subspace of size 2^support_dim, with
-    all amplitudes of equal magnitude and phases in {+-1, +-i} -- i.e. a genuine
-    stabilizer state. Applying the actual gate actions keeps the GLOBAL phase exact
-    (which a bare tableau would lose), so the result plugs straight into the cut.
-
-    Bit convention matches the rest of the file: qubit q is bit (m-1-q) of the key."""
+    """Phase-EXACT Clifford simulator: state as sparse amplitudes over the affine
+    stabilizer support (a dict {basis state -> amplitude}). Applying the real gate
+    actions keeps the GLOBAL phase exact, which a bare tableau loses."""
 
     def __init__(self, m):
-        self.m = m
-        self.amp = {0: 1.0 + 0j}          # |0...0>
+        self.m, self.amp = m, {0: 1.0 + 0j}
 
     def _mask(self, q):
         return 1 << (self.m - 1 - q)
@@ -119,50 +125,33 @@ class StabilizerSim:
     def _bit(self, x, q):
         return (x >> (self.m - 1 - q)) & 1
 
-    def z(self, q):
-        for x in self.amp:
-            if self._bit(x, q):
-                self.amp[x] = -self.amp[x]
-
-    def s(self, q):
-        for x in self.amp:
-            if self._bit(x, q):
-                self.amp[x] *= 1j
-
-    def x(self, q):
-        mask = self._mask(q)
-        self.amp = {x ^ mask: a for x, a in self.amp.items()}
-
-    def y(self, q):
-        mask = self._mask(q)
-        self.amp = {x ^ mask: (1j * (-1) ** self._bit(x, q)) * a for x, a in self.amp.items()}
-
-    def cx(self, c, t):
-        cm, tm = self._mask(c), self._mask(t)
-        self.amp = {(x ^ tm if x & cm else x): a for x, a in self.amp.items()}
-
-    def cz(self, a, b):
-        for x in self.amp:
-            if self._bit(x, a) and self._bit(x, b):
-                self.amp[x] = -self.amp[x]
-
-    def h(self, q):
-        mask = self._mask(q)
-        inv = 1.0 / math.sqrt(2)
-        new = defaultdict(complex)
-        for x, a in self.amp.items():
-            sign = -1 if (x & mask) else 1
-            new[x & ~mask] += a * inv             # branch with bit q = 0
-            new[x | mask] += a * inv * sign       # branch with bit q = 1 (phase (-1)^x_q)
-        self.amp = {x: a for x, a in new.items() if abs(a) > 1e-12}
-
     def apply(self, name, qs):
         if name == "I":
             return
-        {"H": lambda: self.h(qs[0]), "S": lambda: self.s(qs[0]),
-         "X": lambda: self.x(qs[0]), "Y": lambda: self.y(qs[0]), "Z": lambda: self.z(qs[0]),
-         "CX": lambda: self.cx(qs[0], qs[1]), "CNOT": lambda: self.cx(qs[0], qs[1]),
-         "CZ": lambda: self.cz(qs[0], qs[1])}[name]()
+        if name in ("Z", "S"):
+            f = 1j if name == "S" else -1
+            for x in self.amp:
+                if self._bit(x, qs[0]):
+                    self.amp[x] *= f
+        elif name in ("X", "Y"):
+            mask = self._mask(qs[0])
+            self.amp = {x ^ mask: (1j * (-1) ** self._bit(x, qs[0]) if name == "Y" else 1) * a
+                        for x, a in self.amp.items()}
+        elif name in ("CX", "CNOT"):
+            cm, tm = self._mask(qs[0]), self._mask(qs[1])
+            self.amp = {(x ^ tm if x & cm else x): a for x, a in self.amp.items()}
+        elif name == "CZ":
+            for x in self.amp:
+                if self._bit(x, qs[0]) and self._bit(x, qs[1]):
+                    self.amp[x] *= -1
+        elif name == "H":
+            mask, inv = self._mask(qs[0]), 1.0 / math.sqrt(2)
+            new = defaultdict(complex)
+            for x, a in self.amp.items():
+                sign = -1 if (x & mask) else 1
+                new[x & ~mask] += a * inv
+                new[x | mask] += a * inv * sign
+            self.amp = {x: a for x, a in new.items() if abs(a) > 1e-12}
 
     def statevector(self):
         psi = np.zeros(2 ** self.m, dtype=complex)
@@ -170,23 +159,111 @@ class StabilizerSim:
             psi[x] = a
         return psi
 
-    @property
-    def support(self):
-        return len(self.amp)
-
 
 def run_stabilizer(m, named_ops):
-    """Run a Clifford circuit (list of (name, qubits)) on the stabilizer engine and
-    return (statevector, support_size)."""
     sim = StabilizerSim(m)
     for name, qs in named_ops:
         sim.apply(name, qs)
-    return sim.statevector(), sim.support
+    return sim.statevector(), len(sim.amp)
+
+
+# --- free-fermion engine (fermionic Gaussian / pairing-matrix representation) -
+def pfaffian(A):
+    """Pfaffian of an antisymmetric matrix via Laplace-style expansion along the first
+    row: Pf(A) = sum_{j>0} (-1)^j A[0,j] Pf(A with rows/cols 0 and j removed). Pf of the
+    empty matrix is 1; Pf of any odd-size matrix is 0. (Fine for the small minors here.)"""
+    n = A.shape[0]
+    if n == 0:
+        return 1.0 + 0j
+    if n % 2 == 1:
+        return 0.0 + 0j
+    total = 0.0 + 0j
+    rest = list(range(1, n))                      # candidate partners j for index 0
+    for jj, j in enumerate(rest):
+        if A[0, j] != 0:
+            sub = [rest[t] for t in range(len(rest)) if t != jj]   # remove rows/cols 0 and j
+            total += (-1) ** jj * A[0, j] * pfaffian(A[np.ix_(sub, sub)])
+    return total
+
+
+class FreeFermionSim:
+    """Phase-EXACT free-fermion (matchgate) simulator. The state is the fermionic
+    Gaussian state |psi> ~ exp(1/2 sum A_ij a_i^dag a_j^dag)|0>, stored as the m x m
+    antisymmetric pairing matrix A and the vacuum amplitude v = <0|psi>. Supports an
+    initial disjoint PAIRING layer (sets A directly) followed by number-conserving
+    matchgates (RZ, hopping XX_YY, FSWAP, Z), each updating A by a closed-form
+    congruence A -> W A W^T and v by a known scalar. Amplitudes are Pfaffians:
+    <x|psi> = v * Pf(A restricted to the occupied modes of x)."""
+
+    def __init__(self, m):
+        self.m, self.A, self.v = m, np.zeros((m, m), dtype=complex), 1.0 + 0j
+
+    def _congruence(self, W2, i, j):
+        """A number-conserving Gaussian gate acts on creation operators by
+        a_k^dag -> sum_l W_lk a_l^dag, which carries the Thouless matrix to W A W^T.
+        Here W is the identity except for a 2x2 block W2 on modes (i, j)."""
+        W = np.eye(self.m, dtype=complex)
+        W[i, i], W[i, j], W[j, i], W[j, j] = W2[0, 0], W2[0, 1], W2[1, 0], W2[1, 1]
+        self.A = W @ self.A @ W.T
+
+    def apply(self, name, qs, param):
+        if name == "I":
+            return
+        if name == "RZ":
+            # RZ(th) = e^{-i th/2} exp(i th n_q): the exp(i th n_q) part sends
+            # a_q^dag -> e^{i th} a_q^dag, scaling row/col q of A; the e^{-i th/2}
+            # prefactor is a vacuum phase (it acts on |0>) and goes into v.
+            q, th = qs[0], param
+            self.A[q, :] *= np.exp(1j * th)
+            self.A[:, q] *= np.exp(1j * th)
+            self.v *= np.exp(-1j * th / 2)
+        elif name == "Z":
+            # Z = exp(i pi n_q): a_q^dag -> -a_q^dag (and Z|0> = |0>, so v is unchanged).
+            q = qs[0]
+            self.A[q, :] *= -1
+            self.A[:, q] *= -1
+        elif name == "XX_YY":
+            # Hopping exp(-i th (a_i^dag a_j + a_j^dag a_i)): creation operators rotate
+            # by W = exp(-i th [[0,1],[1,0]]) = [[cos,-i sin],[-i sin,cos]]. It annihilates
+            # the vacuum, so v is unchanged.
+            c, s = math.cos(param), math.sin(param)
+            self._congruence(np.array([[c, -1j * s], [-1j * s, c]]), qs[0], qs[1])
+        elif name == "FSWAP":
+            # Fermionic swap: exchange modes i and j (the -1 on |11> is automatic from
+            # the antisymmetry of A under the row/col swap). Vacuum unchanged.
+            self._congruence(np.array([[0, 1], [1, 0]], dtype=complex), qs[0], qs[1])
+        elif name == "PAIR":
+            # exp(-i th/2 (XX-YY)) on a FRESH pair: PAIR|00> = cos th |00> - i sin th |11>.
+            # In Thouless form cos th (|00> + A_ij |11>), so A_ij = -i tan th (i<j) and
+            # the vacuum amplitude picks up cos th. (Restricted to fresh, disjoint modes
+            # so no Mobius update is needed -- this is the initial pairing layer.)
+            i, j, th = qs[0], qs[1], param
+            assert i < j and not self.A[i, :].any() and not self.A[j, :].any(), \
+                "PAIR must act on fresh, ascending modes (initial disjoint layer)"
+            self.A[i, j], self.A[j, i] = -1j * math.tan(th), 1j * math.tan(th)
+            self.v *= math.cos(th)
+
+    def statevector(self):
+        # Amplitude of basis state x: <x|psi> = <0|psi> * Pf(A restricted to the modes
+        # occupied in x). Odd occupation -> 0 (the state lives in the even-parity sector).
+        psi = np.zeros(2 ** self.m, dtype=complex)
+        for x in range(2 ** self.m):
+            S = [q for q in range(self.m) if (x >> (self.m - 1 - q)) & 1]   # occupied modes
+            if len(S) % 2 == 0:
+                psi[x] = self.v * pfaffian(self.A[np.ix_(S, S)])
+        return psi
+
+
+def run_freefermion(m, named_param_ops):
+    sim = FreeFermionSim(m)
+    for name, qs, param in named_param_ops:
+        sim.apply(name, qs, param)
+    return sim.statevector()
 
 
 # --- per-block routing (the same meters as ../simulator-router/) --------------
 CLIFFORD = {"H", "S", "SDG", "X", "Y", "Z", "CX", "CNOT", "CZ", "SWAP"}
-MATCHGATE = {"RZ", "Z", "XY", "XX_YY", "GIVENS", "FSWAP", "MG"}
+MATCHGATE = {"RZ", "Z", "XY", "XX_YY", "GIVENS", "FSWAP", "PAIR", "MG"}
 ALPHA = 0.2284
 
 
@@ -195,11 +272,9 @@ def _poly(x):
 
 
 def route_block(gates, m):
-    """Route a block's native gates (list of (name, qubits)) to its cheapest member."""
     t = sum(1 for (nm, _) in gates if nm not in CLIFFORD)
     k = sum(1 for (nm, _) in gates if nm not in MATCHGATE)
-    costs = {"state vector": float(m),
-             "stabilizer": ALPHA * t + _poly(m),
+    costs = {"state vector": float(m), "stabilizer": ALPHA * t + _poly(m),
              "free fermion": k * math.log2(4) + _poly(2 * m)}
     member = min(costs, key=lambda c: costs[c])
     return member, costs[member], {"t": t, "k": k}
@@ -207,38 +282,49 @@ def route_block(gates, m):
 
 # --- Pauli-basis decomposition of a crossing gate ----------------------------
 def pauli_decomposition(U, tol=1e-12):
-    """Write a 4x4 gate as U = sum_{P,Q} c_{PQ} P (x) Q with P, Q Paulis.
-    Returns [(coeff, P_name, Q_name)]; P acts on the gate's first qubit, Q the
-    second. Keeping the factors Paulis is what lets block A stay Clifford."""
-    terms = []
-    for pn, P in PAULI.items():
-        for qn, Q in PAULI.items():
-            c = np.trace(np.kron(P, Q).conj().T @ U) / 4.0
-            if abs(c) > tol:
-                terms.append((c, pn, qn))
+    """U = sum_{P,Q} c_{PQ} P (x) Q; returns [(coeff, P_name, Q_name)]."""
+    terms = [(np.trace(np.kron(P, Q).conj().T @ U) / 4.0, pn, qn)
+             for pn, P in PAULI.items() for qn, Q in PAULI.items()]
+    terms = [(c, pn, qn) for (c, pn, qn) in terms if abs(c) > tol]
     assert np.allclose(sum(c * np.kron(PAULI[pn], PAULI[qn]) for (c, pn, qn) in terms), U)
     return terms
 
 
-# --- the hybrid: cut, route each half, run A on the stabilizer engine ---------
+def _sign_mask(m, z_qubits):
+    """Diagonal +-1 mask on an m-qubit register for a product of Z's (and I's)."""
+    mask = np.ones(2 ** m)
+    for q in z_qubits:
+        bit = 1 << (m - 1 - q)
+        mask *= np.array([-1.0 if (x & bit) else 1.0 for x in range(2 ** m)])
+    return mask
+
+
+# --- the hybrid: cut, route each half, run A and B on their own engines -------
 def simulate_by_cutting(n, circuit):
+    """Cut `circuit` (list of (name, U, qubits, param)) down the middle into blocks
+    A | B, route and run each block on its own engine, and recombine to the exact
+    state. Crossing gates are Pauli-decomposed; because we cut with CZ the injected
+    factors are diagonal (I/Z), so each block's base state is computed ONCE (block A
+    on the stabilizer engine, block B on the free-fermion engine) and every branch is
+    just a cheap +-1 sign mask times that base state. Returns the recombined state,
+    the branch count, and each half's routing."""
     cut = n // 2
     in_A = lambda q: q < cut
     locA, locB = (lambda q: q), (lambda q: q - cut)
 
-    aOps, bOps = [], []          # block A: (name, locqs);  block B: (U, locqs)
-    aNames, bNames = [], []      # native gate names for routing each half
+    aNamed, bParam = [], []      # block A: (name, locqs);  block B: (name, locqs, param)
+    aNames, bNames = [], []      # native gate names for routing
     crossing = []                # (terms, aq_local, bq_local, a_is_first)
-    for (name, U, qs) in circuit:
+    for (name, U, qs, param) in circuit:
         if len(qs) == 1:
             if in_A(qs[0]):
-                aOps.append((name, (locA(qs[0]),))); aNames.append((name, qs))
+                aNamed.append((name, (locA(qs[0]),))); aNames.append((name, qs))
             else:
-                bOps.append((U, (locB(qs[0]),))); bNames.append((name, qs))
+                bParam.append((name, (locB(qs[0]),), param)); bNames.append((name, qs))
         elif in_A(qs[0]) and in_A(qs[1]):
-            aOps.append((name, (locA(qs[0]), locA(qs[1])))); aNames.append((name, qs))
+            aNamed.append((name, (locA(qs[0]), locA(qs[1])))); aNames.append((name, qs))
         elif (not in_A(qs[0])) and (not in_A(qs[1])):
-            bOps.append((U, (locB(qs[0]), locB(qs[1])))); bNames.append((name, qs))
+            bParam.append((name, (locB(qs[0]), locB(qs[1])), param)); bNames.append((name, qs))
         else:
             q0, q1 = qs
             aq, bq = (q0, q1) if in_A(q0) else (q1, q0)
@@ -248,84 +334,111 @@ def simulate_by_cutting(n, circuit):
     n_branches = int(np.prod(ranks)) if ranks else 1
     routeA, routeB = route_block(aNames, cut), route_block(bNames, n - cut)
 
+    # Each block's base state, computed ONCE on its own engine.
+    phiA, supportA = run_stabilizer(cut, aNamed)        # block A: stabilizer engine
+    phiB = run_freefermion(n - cut, bParam)             # block B: free-fermion engine
+
     full = np.zeros(2 ** cut * 2 ** (n - cut), dtype=complex)
-    supportA_max = 0
     for choice in (itertools.product(*[range(r) for r in ranks]) if ranks else [()]):
-        a_named = list(aOps)
-        b_mats = list(bOps)
         coeff = 1.0 + 0j
+        za, zb = [], []                                  # injected Z qubits per block
         for ci, (terms, aq, bq, a_is_first) in enumerate(crossing):
             c, pn, qn = terms[choice[ci]]
             coeff *= c
-            a_pauli, b_pauli = (pn, qn) if a_is_first else (qn, pn)
-            a_named.append((a_pauli, (aq,)))           # Pauli factor -> block A (Clifford)
-            b_mats.append((PAULI[b_pauli], (bq,)))     # Pauli factor -> block B
-        stateA, supA = run_stabilizer(cut, a_named)    # block A on the STABILIZER engine
-        stateB = run_statevector(n - cut, b_mats)      # block B on the universal engine
-        supportA_max = max(supportA_max, supA)
+            a_p, b_p = (pn, qn) if a_is_first else (qn, pn)
+            assert a_p in ("I", "Z") and b_p in ("I", "Z"), "CZ cut must inject only I/Z"
+            if a_p == "Z":
+                za.append(aq)
+            if b_p == "Z":
+                zb.append(bq)
+        stateA = _sign_mask(cut, za) * phiA              # diagonal Z's = cheap sign masks
+        stateB = _sign_mask(n - cut, zb) * phiB
         full += coeff * np.kron(stateA, stateB)
 
     return {"state": full, "branches": n_branches, "n_crossing": len(crossing),
-            "routeA": routeA, "routeB": routeB, "supportA": supportA_max}
+            "routeA": routeA, "routeB": routeB, "supportA": supportA}
 
 
 # --- a two-natured demonstration circuit -------------------------------------
 def two_natured_circuit(n, seed=0):
     """Block A (qubits 0..n/2-1): a low-Hadamard Clifford circuit -> stabilizer.
-    Block B (qubits n/2..n-1): a free-fermion circuit (RZ, XX_YY, FSWAP) -> matchgate.
-    Plus two CNOTs crossing the middle. Easy along different axes; hard as a whole."""
+    Block B (qubits n/2..n-1): a free-fermion circuit -- an initial pairing layer
+    then number-conserving matchgates -> free fermion. Plus two CZ gates crossing
+    the middle. Easy along different axes; hard as a whole."""
     rng = np.random.default_rng(seed)
     cut = n // 2
     c = []
-    # Block A: Clifford, only a few Hadamards (so the stabilizer support stays small)
+    # Block A: Clifford, only a few Hadamards (keeps the stabilizer support small)
     for q in (0, 1, 2):
-        c.append(("H", H, (q,)))
+        c.append(("H", H, (q,), None))
     for q in range(cut - 1):
-        c.append(("CX", CNOT, (q, q + 1)))
+        c.append(("CX", CNOT, (q, q + 1), None))
     for q in range(0, cut, 3):
-        c.append(("S", S, (q,)))
-    c.append(("CZ", CZ, (0, cut - 1)))
-    # Block B: free fermion (k = 0, but full of non-Clifford rotations -> t large)
+        c.append(("S", S, (q,), None))
+    c.append(("CZ", CZ, (0, cut - 1), None))
+    # Block B: free fermion -- a pairing layer (creates a genuine Gaussian state)...
+    for q in range(cut, n - 1, 2):
+        th = rng.uniform(0.3, 1.2)
+        c.append(("PAIR", pair_gate(th), (q, q + 1), th))
+    # ...then number-conserving matchgates
     for q in range(cut, n):
-        c.append(("RZ", rz(rng.uniform(0.2, 3.0)), (q,)))
+        th = rng.uniform(0.2, 3.0)
+        c.append(("RZ", rz(th), (q,), th))
     for q in range(cut, n - 1):
-        c.append(("XX_YY", xx_yy(rng.uniform(0.2, 3.0)), (q, q + 1)))
-    c.append(("FSWAP", FSWAP, (cut, cut + 1)))
-    c.append(("FSWAP", FSWAP, (n - 2, n - 1)))
-    # the few gates crossing the cut (what you pay for)
-    c.append(("CX", CNOT, (cut - 1, cut)))
-    c.append(("CX", CNOT, (cut - 2, cut + 1)))
+        th = rng.uniform(0.2, 3.0)
+        c.append(("XX_YY", xx_yy(th), (q, q + 1), th))
+    c.append(("FSWAP", FSWAP, (cut, cut + 1), None))
+    # the two gates crossing the cut: CZ injects only I/Z into each block
+    c.append(("CZ", CZ, (cut - 1, cut), None))
+    c.append(("CZ", CZ, (cut - 2, cut + 1), None))
     return c
 
 
 def self_test():
-    """Independently verify the stabilizer engine: on random Clifford circuits its
-    statevector must equal the universal engine's EXACTLY, global phase included."""
+    """Validate both engines against the universal backend on random circuits."""
     rng = np.random.default_rng(1)
-    name_to_mat = {"H": H, "S": S, "X": PX, "Y": PY, "Z": PZ, "CX": CNOT, "CZ": CZ}
-    for _ in range(200):
-        m = rng.integers(2, 6)
-        ops_named, ops_mat = [], []
-        for _ in range(rng.integers(5, 25)):
-            g = rng.choice(["H", "S", "X", "Y", "Z", "CX", "CZ"])
-            if g in ("CX", "CZ"):
-                a, b = rng.choice(m, size=2, replace=False)
-                ops_named.append((g, (int(a), int(b)))); ops_mat.append((name_to_mat[g], (int(a), int(b))))
+    cliff = {"H": H, "S": S, "X": PX, "Y": PY, "Z": PZ, "CX": CNOT, "CZ": CZ}
+    for _ in range(150):                               # stabilizer engine
+        m = int(rng.integers(2, 6))
+        named, mats = [], []
+        for _ in range(int(rng.integers(5, 25))):
+            g = str(rng.choice(["H", "S", "X", "Y", "Z", "CX", "CZ"]))
+            qs = tuple(int(x) for x in rng.choice(m, size=(2 if g in ("CX", "CZ") else 1), replace=False))
+            named.append((g, qs)); mats.append((cliff[g], qs))
+        vec, _ = run_stabilizer(m, named)
+        assert np.allclose(vec, run_statevector(m, mats), atol=1e-10), "stabilizer mismatch!"
+    print("  [stabilizer engine: phase-exact on 150 random Clifford circuits]")
+
+    for _ in range(150):                               # free-fermion engine
+        m = int(rng.integers(2, 7))
+        named_param, mats = [], []
+        used = set()
+        for q in range(0, m - 1, 2):                   # initial disjoint pairing layer
+            if rng.random() < 0.7:
+                th = rng.uniform(0.2, 1.3)
+                named_param.append(("PAIR", (q, q + 1), th)); mats.append((pair_gate(th), (q, q + 1)))
+                used.update((q, q + 1))
+        for _ in range(int(rng.integers(3, 18))):      # number-conserving matchgates
+            g = str(rng.choice(["RZ", "XX_YY", "FSWAP", "Z"]))
+            if g in ("XX_YY", "FSWAP"):
+                q = int(rng.integers(m - 1))
+                th = rng.uniform(0.2, 3.0)
+                named_param.append((g, (q, q + 1), th))
+                mats.append((xx_yy(th) if g == "XX_YY" else FSWAP, (q, q + 1)))
             else:
-                a = int(rng.integers(m))
-                ops_named.append((g, (a,))); ops_mat.append((name_to_mat[g], (a,)))
-        vec_stab, _ = run_stabilizer(m, ops_named)
-        vec_ref = run_statevector(m, ops_mat)
-        assert np.allclose(vec_stab, vec_ref, atol=1e-10), "stabilizer engine mismatch!"
-        nz = np.abs(vec_stab[np.abs(vec_stab) > 1e-9])
-        assert np.allclose(nz, nz[0]), "not a stabilizer state (unequal magnitudes)!"
-    print("  [self-test passed: stabilizer engine is phase-exact on 200 random Clifford circuits]")
+                q = int(rng.integers(m)); th = rng.uniform(0.2, 3.0)
+                named_param.append((g, (q,), th if g == "RZ" else None))
+                mats.append((rz(th) if g == "RZ" else PZ, (q,)))
+        vec = run_freefermion(m, named_param)
+        ref = run_statevector(m, mats)
+        assert np.allclose(vec, ref, atol=1e-10), "free-fermion engine mismatch!"
+    print("  [free-fermion engine: phase-exact on 150 random matchgate circuits]")
 
 
 def main():
     print(__doc__)
     print("=" * 74)
-    print("Step 0 -- validate the phase-aware stabilizer engine")
+    print("Step 0 -- validate the two phase-aware engines")
     print("=" * 74)
     self_test()
 
@@ -336,24 +449,24 @@ def main():
     print("\n" + "=" * 74)
     print(f"A two-natured circuit on n = {n} qubits ({len(circuit)} gates)")
     print("=" * 74)
-    whole = route_block([(nm, qs) for (nm, U, qs) in circuit], n)
+    whole = route_block([(nm, qs) for (nm, U, qs, p) in circuit], n)
     print(f"  Route the WHOLE circuit:  -> {whole[0].upper():<13} "
           f"(t = {whole[2]['t']}, k = {whole[2]['k']};  best single method, cost ~ 2^{whole[1]:.1f})")
     print("  No single method is POLYNOMIAL on the whole: a stabilizer simulator must")
-    print("  pay for all the non-Clifford rotations (t large), and a free-fermion")
-    print("  simulator for all the H/CX gates (k large). The best of them is exponential.")
+    print("  pay for the non-Clifford rotations/pairings (t large), a free-fermion")
+    print("  simulator for the H/CX/S gates (k large). The best of them is exponential.")
 
     out = simulate_by_cutting(n, circuit)
     (mA, cA, meA), (mB, cB, meB) = out["routeA"], out["routeB"]
     print(f"\n  Cut into two halves of {cut} qubits and route EACH:")
-    print(f"    block A (qubits 0..{cut-1}):  -> {mA.upper():<13} (t = {meA['t']}, k = {meA['k']})"
-          f"  -- RUN on the stabilizer engine, support 2^{int(math.log2(out['supportA']))} "
+    print(f"    block A (qubits 0..{cut-1}):  -> {mA.upper():<13} (t={meA['t']}, k={meA['k']})"
+          f"  -- RUN on the STABILIZER engine, support 2^{int(round(math.log2(out['supportA'])))} "
           f"= {out['supportA']} (not 2^{cut})")
-    print(f"    block B (qubits {cut}..{n-1}): -> {mB.upper():<13} (t = {meB['t']}, k = {meB['k']})"
-          f"  -- run on the universal engine (native free-fermion engine: future)")
-    print(f"    + {out['n_crossing']} crossing gate(s), Pauli-decomposed  ->  {out['branches']} branches")
+    print(f"    block B (qubits {cut}..{n-1}): -> {mB.upper():<13} (t={meB['t']}, k={meB['k']})"
+          f"  -- RUN on the FREE-FERMION engine (m x m pairing matrix + Pfaffians)")
+    print(f"    + {out['n_crossing']} crossing CZ gate(s), Pauli-decomposed  ->  {out['branches']} branches")
 
-    truth = run_statevector(n, [(U, qs) for (nm, U, qs) in circuit])
+    truth = run_statevector(n, [(U, qs) for (nm, U, qs, p) in circuit])
     ok = np.allclose(out["state"], truth, atol=1e-10)
     print(f"\n  Exact match with brute force: {ok}")
     assert ok, "hybrid result did not match brute force!"
@@ -363,7 +476,7 @@ def main():
     print("\n  Cost (operations, order of magnitude):")
     print(f"    brute force ................... 2^{n} = {brute:,.0f}")
     print(f"    route the whole circuit ....... ~ {whole_cost:,.0f}")
-    print(f"    cut + route each half ......... {out['branches']} x (2^{int(math.log2(out['supportA']))} "
+    print(f"    cut + route each half ......... {out['branches']} x (2^{int(round(math.log2(out['supportA'])))} "
           f"+ 2^{cB:.1f}) = {cut_cost:,.0f}   ({brute / cut_cost:.0f}x less than brute force)")
 
     print("\n" + "=" * 74)
@@ -371,10 +484,9 @@ def main():
     print("=" * 74)
     print("  A circuit with no single cheap method splits into pieces that are each")
     print("  cheap -- along DIFFERENT axes. The dispatcher cuts, routes every piece to")
-    print("  its own member, and pays only for the cut. Block A is now genuinely run by")
-    print("  the phase-aware stabilizer engine (and its global phase is exact, so the")
-    print("  cut recombines to the verified answer). Running block B on its NATIVE")
-    print("  free-fermion engine is the one remaining drop-in.")
+    print("  its own member, and runs it there: block A on a phase-aware stabilizer")
+    print("  engine, block B on a free-fermion (pairing-matrix + Pfaffian) engine. Both")
+    print("  are phase-exact, so the cut recombines to the verified brute-force answer.")
 
 
 if __name__ == "__main__":

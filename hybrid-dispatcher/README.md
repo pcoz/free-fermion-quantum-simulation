@@ -3,9 +3,9 @@
 The [`simulator-router/`](../simulator-router/) example answers *"which single
 simulator is cheapest for this whole circuit?"* This is the sequel, and it closes
 the loop: instead of choosing one method, **cut the circuit into pieces and route
-each piece to its own cheapest simulator** — and one piece is actually run on a real
-stabilizer engine — paying an exponential price only in the small "hard part" that
-connects the pieces.
+each piece to its own cheapest simulator** — and *both* halves are now run on real
+structured engines (a stabilizer engine and a free-fermion engine) — paying an
+exponential price only in the small "hard part" that connects the pieces.
 
 ```bash
 python hybrid_dispatcher.py     # needs numpy
@@ -15,77 +15,83 @@ python hybrid_dispatcher.py     # needs numpy
 
 **1. Circuit cutting** (circuit knitting / the Schrödinger–Feynman method — what
 Google used to verify Sycamore on classical computers). Split the qubits into halves
-**A** and **B**; only a few gates *cross* between them. We expand each crossing
-two-qubit gate in the **Pauli basis**, `G = Σ c_{PQ} P ⊗ Q`. Expanding, the whole
-circuit becomes a sum over **branches**, and in every branch the gates split cleanly
-into an A-only and a B-only circuit:
+**A** and **B**; only a few gates *cross* between them. We expand each crossing gate
+in the **Pauli basis**, `G = Σ c_{PQ} P ⊗ Q`. Expanding, the whole circuit becomes a
+sum over **branches**, and in every branch the gates split cleanly into an A-only and
+a B-only circuit:
 
 ```
 |whole circuit>  =  Σ over branches   coeff · |result on A>  ⊗  |result on B>
 ```
 
-This is an **exact identity**. The Pauli basis is chosen deliberately: the factor
-injected into each block is a *Pauli*, so block A stays a **Clifford** circuit (a
-stabilizer simulator can run it) and block B stays a matchgate-plus-Pauli circuit.
-You pay only in the cut; the price of the Pauli basis is a few more branches (4 per
-CNOT instead of 2).
+This is an **exact identity**. We cut with **CZ** gates on purpose: their Pauli
+decomposition injects only `I` or `Z` (a *diagonal* factor) into each block — so
+block A stays **Clifford** and block B stays a **free-fermion (matchgate)** circuit,
+each piece remaining inside its member's gate set, and each block state factorises as
+a fixed base state times a cheap sign mask. You pay only in the cut.
 
-**2. Per-block routing — with a real per-block engine.** Once cut, each half is its
-own circuit, so we route it to its cheapest member. Here block A is **actually
-executed by a phase-aware stabilizer engine**, not the universal one. The punchline:
+**2. Per-block routing — with real per-block engines.** Once cut, each half is its
+own circuit, routed to its cheapest member and **run there**:
 
 > A circuit can have **no single cheap method as a whole**, yet split into halves
-> that are each easy along a **different axis.**
+> that are each easy along a **different axis** — a Clifford half and a free-fermion
+> half.
 
-## Why the stabilizer engine must be phase-aware
+## The two engines (and why they must be phase-aware)
 
 The recombination sums `|A> ⊗ |B>` over branches, so each block state must carry its
-correct **global phase** — otherwise the branches interfere wrongly. A bare
-stabilizer *tableau* is poly-time but fixes the state only up to a global phase,
-which is exactly the information the cut needs. So block A is run with a stabilizer
-engine in the **explicit-superposition representation**: it keeps the state as its
-sparse amplitudes over the affine stabilizer support — phase-exact, and compressed to
-`2^(support)` entries (a genuine saving for low-Hadamard Clifford blocks). A
-self-test checks it against the universal engine on 200 random Clifford circuits,
-exactly, global phase included. (Poly-time *and* phase-exact is the CH-form; this is
-the phase-exact, easy-to-verify version.)
+correct **global phase**, or the branches interfere wrongly. A bare stabilizer
+tableau (or a bare covariance matrix) is poly-time but fixes the state only up to a
+global phase — exactly the information the cut needs. So both engines track it:
+
+- **Stabilizer (block A)** — the explicit stabilizer-superposition representation:
+  the state as its sparse amplitudes over the affine support. Phase-exact, and
+  compresses to `2^(support)` (block A spreads over `2^3`, not `2^10`).
+- **Free fermion (block B)** — the fermionic Gaussian representation: the `m × m`
+  pairing matrix `A` with `|ψ> ∝ exp(½ Σ A_ij a†_i a†_j)|0>`. Matchgates update `A` in
+  closed form (number-conserving gates by congruence `A → W A Wᵀ`; an initial
+  disjoint pairing layer sets `A` directly), the vacuum amplitude `<0|ψ>` is tracked
+  to fix the global phase, and amplitudes are **Pfaffians**: `<x|ψ> = <0|ψ>·Pf(A[occupied modes of x])`.
+
+Both engines are validated by a **self-test against the universal backend on random
+circuits** (150 Clifford + 150 matchgate), exactly, global phase included — before
+the dispatcher runs.
 
 ## What the script shows
 
-The demo circuit is a **Clifford half welded to a free-fermion half**, plus two
+The demo circuit is a **Clifford half welded to a free-fermion half**, plus two CZ
 crossing gates, on 20 qubits:
 
 ```
-[self-test passed: stabilizer engine is phase-exact on 200 random Clifford circuits]
+[stabilizer engine: phase-exact on 150 random Clifford circuits]
+[free-fermion engine: phase-exact on 150 random matchgate circuits]
 
-Route the WHOLE circuit:  -> STABILIZER   (t=21, k=19; best single method, cost ~ 2^13.4)
+Route the WHOLE circuit:  -> STABILIZER   (t=25, k=19; best single method, cost ~ 2^14.4)
   No single method is polynomial on the whole.
 
 Cut into two halves and route EACH:
   block A (0..9):   -> STABILIZER    (t=0)  -- RUN on the stabilizer engine, support 2^3 = 8 (not 2^10)
-  block B (10..19): -> FREE FERMION  (k=0)  -- universal engine (native free-fermion engine: future)
-  + 2 crossing gates, Pauli-decomposed  ->  16 branches
+  block B (10..19): -> FREE FERMION  (k=0)  -- RUN on the free-fermion engine (pairing matrix + Pfaffians)
+  + 2 crossing CZ gates, Pauli-decomposed  ->  16 branches
 
 Exact match with brute force: True
 
   brute force ............. 2^20 = 1,048,576
-  route the whole circuit . ~ 11,115
+  route the whole circuit . ~ 20,938
   cut + route each half ... 16 x (2^3 + 2^8.6) = 6,528   (161x less than brute force)
 ```
 
 The recombined state is **verified equal to brute force to machine precision**, with
-block A genuinely run in the stabilizer formalism (support 8, not 1024). Cutting
-*exposed* structure invisible in the whole circuit: each half is cheap under a
-different member, and you pay only for the cut.
+each half genuinely run on its own structured, phase-exact engine. Cutting *exposed*
+structure invisible in the whole circuit: each half is cheap under a different member.
 
 ## Honest scope
 
 Circuit cutting is exact and general, but its cost is **multiplicative in the number
 of crossing gates** (branches grow with each crossing gate's Pauli rank), so it wins
-when the cut is narrow — the regime the router's entanglement meter `w` detects.
-Block A is now run by a real phase-aware stabilizer engine; **running block B on its
-native polynomial free-fermion engine** (phase-correct across the cut) is the one
-remaining drop-in. The stabilizer engine's explicit-superposition representation is
-phase-exact but its cost scales with the stabilizer support (`2^k`), which is small
-for low-Hadamard blocks and grows toward the full vector for Hadamard-heavy ones; the
-CH-form is the poly-time-always refinement.
+when the cut is narrow — the regime the router's entanglement meter `w` detects. Both
+engines are phase-exact; their *compact* objects are poly (the stabilizer support and
+the `m × m` pairing matrix), and reconstructing a full block statevector here is a
+readout cost (one Pfaffian per amplitude for the free-fermion block). Doing the
+recombination at the **amplitude level** — never materialising a full block vector —
+is the route to the full asymptotic win, and is the natural next refinement.
