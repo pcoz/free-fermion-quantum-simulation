@@ -84,9 +84,10 @@ without ever writing down all 2ⁿ numbers. The catch is that there is **no sing
 method**: each known technique exploits a *different* kind of structure, works
 brilliantly when that structure is present, and fails when it isn't.
 
-Classical quantum simulation is therefore best understood as a **toolbox**, and
-choosing the tool whose assumption matches your problem is what determines whether
-the simulation is feasible at all:
+Classical quantum simulation is therefore best understood not as one algorithm but
+as **the family of quantum simulators** — a toolbox whose members each exploit a
+different structure — and choosing the member whose assumption matches your problem
+is what determines whether the simulation is feasible at all:
 
 | method | structure it exploits | exact? | where it wins / where it stops |
 |---|---|---|---|
@@ -119,7 +120,7 @@ to its exact, large-scale conclusion, and shows where it ends.
 
 ## How these methods combine
 
-The five rows above are not five islands. Because each method only has to pay for
+The members of this family are not islands. Because each method only has to pay for
 the *part* of a problem that breaks its assumption, the methods can be **wired
 together** — handle the bulk with a cheap structured method, and pay an exponential
 price only in the small amount of "hard" stuff left over. Several of these hybrids
