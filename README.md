@@ -113,7 +113,7 @@ quantum advantage lives where *no* axis applies:** a circuit that is at once
 highly entangled, magic-rich, interacting, and sign-problematic offers no
 structure for any classical method to exploit — and that is exactly the regime a
 quantum computer is for. This repo takes one of those axes, the free-fermion one,
-to its exact, large-scale conclusion, and says honestly where it ends.
+to its exact, large-scale conclusion, and shows where it ends.
 
 ## Built on holant-tools
 
