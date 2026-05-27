@@ -82,7 +82,7 @@ namesake), [`ising-phase-transition/`](ising-phase-transition/),
 ## Quick start
 
 ```bash
-pip install -r requirements.txt        # holant-tools, numpy, sympy
+pip install holant-tools numpy sympy   # the only dependencies
 
 cd free-fermion                  # quantum simulation (the free-fermion examples)
 python ff_analog_twin.py
