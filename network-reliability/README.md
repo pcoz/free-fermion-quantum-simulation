@@ -14,6 +14,26 @@ getting it both mislead exactly there:
   it **zero times** and reports probability 0 — failing worst precisely in the
   tail you care about.
 
+## The scenario: the tail your Monte-Carlo can't see
+
+A reliability engineer at a power or telecom utility needs the probability of a
+**major simultaneous outage** — for a risk model, an insurer, or a regulator. They
+write a Monte-Carlo simulation of correlated failures and run 100,000 samples. The
+big-outage event shows up **zero times**, so the report says **probability 0**.
+
+But the event isn't impossible — it's *rare*. On the small grid in this example the
+exact probability is about **5.7 × 10⁻⁷**: tiny, nonzero, and legally material.
+Reporting 0 isn't conservative, it's wrong. And the convenient *"assume failures are
+independent"* shortcut is no better — it **underestimates that tail by orders of
+magnitude**, because it throws away the very correlation (a storm hitting neighbouring
+lines together) that turns a few failures into a blackout.
+
+For a **planar** grid model, this example computes that exact tail *directly* — the
+same Pfaffian / partition-function machinery as the
+[Ising example](../ising-phase-transition/), **not a simulation at all**. The run
+prints the exact tail beside the independent-failure estimate (off by orders of
+magnitude) and beside Monte-Carlo (which reports 0 right where the risk lives).
+
 ```bash
 pip install numpy
 python network_reliability.py

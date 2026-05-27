@@ -12,6 +12,37 @@ It answers the questions people usually assume are intractable, so never ask:
 - **"If this availability disappears, do we still have a roster?"** — robustness.
 - **"Which single assignment is a hidden single-point-of-failure?"** — criticality.
 
+## The scenario: when your solver can only find *one* answer
+
+Somewhere right now a developer is building a scheduling system — shift rostering,
+exam timetabling, delivery-slot assignment. They wire up a MILP/CP solver (PuLP,
+OR-Tools, CPLEX), spend weeks on the model, and it produces **one** valid schedule.
+Then their manager asks:
+
+> *"How many valid schedules are there? Is this the only one? If a worker becomes
+> unavailable, do we still have cover? Which assignments are we totally dependent on?"*
+
+And the honest answer is **"I can't tell you."** A solver *finds one solution*.
+Counting the whole space, checking robustness, and spotting forced assignments are a
+different beast — you'd have to enumerate (hopeless), or re-run the solver thousands
+of times with constraints knocked out one by one, and *still* not get an exact count.
+
+For a **planar** layout — which covers most real spatial scheduling: a building
+floor, a shift grid, a geographic zone map — this example answers all of those,
+exactly, in milliseconds:
+
+| the manager's question | what it costs here | what a plain solver needs |
+|---|---|---|
+| How many valid schedules exist? | one count | enumerate them all — impossible |
+| Is this schedule the only one? | is that count `== 1`? | re-solve, exclude, repeat |
+| If an availability disappears? | re-count on the edited layout | re-run the whole model |
+| Which assignment is a single point of failure? | a count per assignment | thousands of re-solves, still inexact |
+
+Every answer is the **same exact count** on a slightly modified graph — polynomial,
+not a search. The `holant_planar` call *is* the FKT theorem: it turns "count *all*
+valid full rosters" into a single Pfaffian evaluation. So the questions a scheduler
+can't touch become a handful of lines that run in milliseconds.
+
 ```bash
 pip install holant-tools
 python roster_solution_space.py
