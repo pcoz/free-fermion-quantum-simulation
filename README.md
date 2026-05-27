@@ -69,7 +69,7 @@ namesake), [`ising-phase-transition/`](ising-phase-transition/),
 [`network-reliability/`](network-reliability/), and
 [`roster-counting/`](roster-counting/):
 
-| example | what it shows (and why it matters) | the "impossible" it does on silicon |
+| example | what it shows (and why it matters) | the "impossible" done on silicon |
 |---|---|---|
 | [`ff_analog_twin.py`](free-fermion/ff_analog_twin.py) | Simulate a quantum system (a chain of magnetic spins) on an ordinary computer. Quantum systems are famously hard to simulate because the bookkeeping doubles with every particle added — this special "free-fermion" family sidesteps that. | a **2048-qubit** simulation in seconds — a state vector would need more numbers than there are atoms in the universe |
 | [`entanglement_entropy.py`](free-fermion/entanglement_entropy.py) | Measure how *entangled* a quantum system is. Entanglement is the resource behind quantum computing and the fingerprint of exotic phases of matter — and it normally needs the full exponential state to compute. | the entropy of a **512-qubit** chain in ~1 s, where brute force needs ~10¹⁵⁴ numbers |
