@@ -93,6 +93,17 @@ when the cut is narrow — the regime the router's entanglement meter `w` detect
 engines are phase-exact, and their *compact* objects are poly (the stabilizer support
 and the `m × m` pairing matrix).
 
+**A poly-time-always stabilizer engine is in [`ch_form.py`](ch_form.py).** The block-A
+engine above is phase-exact but its cost scales with the stabilizer support (`2^k`),
+so it is only cheap for low-Hadamard blocks. `ch_form.py` carries the *same* phase-exact
+state in the affine-quadratic (CH) form — an `O(n·k)` matrix, never the `2^k` support —
+and updates it in polynomial time for `X, Z, S, CX, CZ` and `H` on a not-yet-superposed
+qubit. That covers the common "Hadamards first, then entangle" normal form, including
+this demo's Clifford half (it applies its H's first); a self-test checks it against a
+state-vector backend on 1000 random circuits, exactly, global phase included. The one
+case left is `H` on an *already-superposed* qubit — the intricate phase-bookkeeping core
+of the full CH-form — which it flags explicitly rather than getting subtly wrong.
+
 **Amplitude-level recombination (the asymptotic win) is implemented.** Beyond building
 the full state, the script also exposes `build_amplitude_oracle`, which returns a
 function `amp(x)` giving any single output amplitude `<x|U|0>` with **no 2ⁿ vector
