@@ -11,8 +11,11 @@ far the circuit sits from each kind of "easy structure", estimates what each
 method would cost, and names the winner.
 
 ```bash
-python simulator_router.py      # pure Python, no dependencies
+python simulator_router.py                       # route six built-in circuits
+python simulator_router.py examples/clifford_t.qasm   # route YOUR own circuit
 ```
+
+Pure Python, no dependencies.
 
 ## How it routes
 
@@ -42,6 +45,45 @@ the router is what matches a problem to the right tool. The free-fermion axis (t
 one this repository is built on) is the exact, entanglement-indifferent corner: it
 wins precisely when a circuit is non-interacting, no matter how non-Clifford or
 entangled it is.
+
+## Route your own circuit
+
+Pass a circuit file and the router analyses just that circuit. Two simple text
+formats are accepted (auto-detected) — gate *parameters are ignored*, since routing
+only depends on the circuit's structure, not its numbers:
+
+**Plain** — one gate per line, `NAME qubit [qubit ...]`; `#` starts a comment and an
+optional `qubits N` line sets the size (otherwise it is inferred):
+
+```
+qubits 4
+rz 0
+xx_yy 0 1      # a matchgate on neighbours
+cx 0 2         # an interacting gate -> bumps k
+```
+
+**QASM-lite** — a subset of OpenQASM 2.0 (`qreg q[N];` plus gate lines):
+
+```
+OPENQASM 2.0;
+qreg q[4];
+h q[0];
+cx q[0],q[1];
+t q[2];
+rz(0.5) q[1];
+```
+
+Two ready-to-run examples live in [`examples/`](examples/):
+
+```bash
+python simulator_router.py examples/clifford_t.qasm    # -> stabilizer (only 2 T-gates)
+python simulator_router.py examples/free_fermion.txt   # -> free fermion (k = 0)
+```
+
+Recognised gate names: Clifford `h s sdg x y z cx/cnot cz swap`; non-Clifford
+`t tdg rz rx ry`; matchgates `rz z xy xx_yy givens fswap`; multi-qubit `ccx`. Any
+**unrecognised** name is treated as a generic gate — neither Clifford nor matchgate
+— which is the safe, conservative choice (it counts against *both* `t` and `k`).
 
 ## Honest scope
 

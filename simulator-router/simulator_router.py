@@ -42,9 +42,11 @@ omitted: it targets a different problem class (thermal / ground states of sign-f
 Hamiltonians), not arbitrary gate circuits. When the router answers "free fermion",
 the actual simulation is exactly what `../free-fermion/ff_analog_twin.py` does.
 
-Run:  python simulator_router.py
+Run:  python simulator_router.py                  # route the six built-in circuits
+      python simulator_router.py my_circuit.qasm  # route YOUR circuit (see README)
 """
 import math
+import re
 from collections import namedtuple
 
 # A gate is just its NAME and the qubits it acts on -- routing only needs the
@@ -109,9 +111,9 @@ def central_cut_entanglement(circuit, n):
     cap = min(cut, n - cut)
     w = 0
     for g in circuit:
-        if len(g.qubits) == 2:
-            a, b = g.qubits
-            if (a < cut) != (b < cut):        # one endpoint each side of the cut
+        if len(g.qubits) >= 2:
+            spans = any(q < cut for q in g.qubits) and any(q >= cut for q in g.qubits)
+            if spans:                         # the gate straddles the cut
                 w = min(w + 1, cap)
     return w
 
@@ -255,37 +257,125 @@ def dense_random(n, depth):
     return c
 
 
-def main():
-    print(__doc__)
+# --- bring your own circuit --------------------------------------------------
+# Map common gate names read from a file onto the router's vocabulary above.
+# Anything unrecognised is kept as-is and treated as a generic gate -- i.e.
+# neither Clifford nor matchgate (so it counts against both t and k).
+GATE_ALIASES = {
+    "h": "H", "x": "X", "y": "Y", "z": "Z", "s": "S", "sdg": "Sdg",
+    "t": "T", "tdg": "Tdg",
+    "cx": "CX", "cnot": "CNOT", "cz": "CZ", "swap": "SWAP",
+    "ccx": "CCX", "toffoli": "TOFFOLI", "ccz": "CCX",
+    "rz": "RZ", "p": "RZ", "u1": "RZ", "rx": "RX", "ry": "RY",
+    "xy": "XY", "xx_yy": "XX_YY", "givens": "GIVENS", "fswap": "FSWAP", "mg": "MG",
+    "u2": "U2", "u3": "U2", "u": "U2",
+}
+
+
+def _normalise(name):
+    return GATE_ALIASES.get(name.lower(), name.upper())
+
+
+def parse_circuit_text(text):
+    r"""Parse a circuit from text, auto-detecting one of two simple formats:
+
+      1) Plain -- one gate per line, "NAME q0 [q1 ...]", e.g.  cx 0 1
+         Blank lines and lines starting with '#' are ignored; an optional
+         "qubits N" line sets the qubit count (otherwise it is inferred).
+
+      2) QASM-lite -- a subset of OpenQASM 2.0: a "qreg q[N];" declaration plus
+         gate lines such as  h q[0];  cx q[0],q[1];  rz(0.5) q[1];  ccx q[0],q[1],q[2];
+         (gate parameters like the 0.5 are ignored -- routing only needs structure).
+
+    Returns (circuit, n)."""
+    gates = []
+    n_decl = None
+    max_q = -1
+    for raw in text.splitlines():
+        line = raw.split("//")[0].split("#")[0].strip().rstrip(";").strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith(("openqasm", "include", "creg", "measure", "barrier")):
+            continue
+        if low.startswith("qreg"):                       # QASM-lite register size
+            m = re.search(r"\[(\d+)\]", line)
+            if m:
+                n_decl = int(m.group(1))
+            continue
+        if low.startswith("qubits"):                     # plain-format size header
+            m = re.search(r"(\d+)", line)
+            if m:
+                n_decl = int(m.group(1))
+            continue
+        # gate line: NAME, an optional "(params)" group, then the qubit arguments.
+        m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\s*(\([^)]*\))?\s*(.*)", line)
+        if not m:
+            continue
+        qubits = tuple(int(x) for x in re.findall(r"\d+", m.group(3)))
+        if not qubits:
+            continue
+        gates.append(Gate(_normalise(m.group(1)), qubits))
+        max_q = max([max_q, *qubits])
+    n = n_decl if n_decl is not None else max_q + 1
+    return gates, n
+
+
+def load_circuit(path):
+    """Read a circuit file (plain or QASM-lite) and return (circuit, n)."""
+    with open(path, "r", encoding="utf-8") as f:
+        return parse_circuit_text(f.read())
+
+
+def run_demos():
+    """Route the six built-in example circuits and print a summary."""
     print("=" * 74)
     print("Routing six circuits to their cheapest classical simulator")
     print("=" * 74)
-
-    results = []
-    results.append(("free-fermion dynamics (TFIM Trotter)",
-                    route("free-fermion dynamics (TFIM Trotter)", tfim_trotter(40, 40), 40)))
-    results.append(("free-fermion + 1 interacting gate",
-                    route("free-fermion + 1 interacting gate",
-                          tfim_trotter_plus_one_toffoli(40, 40), 40)))
-    results.append(("Clifford circuit (no T-gates)",
-                    route("Clifford circuit (no T-gates)", clifford_circuit(40, 40), 40)))
-    results.append(("Clifford + 5 T-gates",
-                    route("Clifford + 5 T-gates", clifford_plus_t(40, 40, 5), 40)))
-    results.append(("shallow generic circuit",
-                    route("shallow generic circuit", shallow_generic(40, 2), 40)))
-    results.append(("deep dense random circuit",
-                    route("deep dense random circuit", dense_random(26, 26), 26)))
+    demos = [
+        ("free-fermion dynamics (TFIM Trotter)", tfim_trotter(40, 40), 40),
+        ("free-fermion + 1 interacting gate", tfim_trotter_plus_one_toffoli(40, 40), 40),
+        ("Clifford circuit (no T-gates)", clifford_circuit(40, 40), 40),
+        ("Clifford + 5 T-gates", clifford_plus_t(40, 40, 5), 40),
+        ("shallow generic circuit", shallow_generic(40, 2), 40),
+        ("deep dense random circuit", dense_random(26, 26), 26),
+    ]
+    winners = [(name, route(name, circ, n)) for (name, circ, n) in demos]
 
     print("=" * 74)
     print("Summary -- same question, six different answers:")
     print("=" * 74)
-    for name, winner in results:
+    for name, winner in winners:
         print(f"  {name:<40} -> {winner}")
     print("\n  The point: there is no single best classical simulator. Each circuit")
     print("  is 'easy' along a DIFFERENT axis, and matching the method to the axis")
     print("  is the whole game. The free-fermion axis -- the one this repo builds")
     print("  on -- is exact, indifferent to entanglement, and wins precisely when a")
     print("  circuit is non-interacting (k = 0), however non-Clifford or entangled.")
+    print("\n  Tip: route YOUR OWN circuit with")
+    print("       python simulator_router.py path/to/circuit.qasm")
+    print("  (plain or QASM-lite format -- see this folder's README).")
+
+
+def main(argv=None):
+    import os
+    import sys
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+
+    if argv:                          # bring your own circuit: route just that file
+        path = argv[0]
+        circuit, n = load_circuit(path)
+        print("=" * 74)
+        print(f"Routing your circuit: {path}   ({len(circuit)} gates, n = {n} qubits)")
+        print("=" * 74)
+        if not circuit:
+            print("  No gates parsed -- check the file format (see this folder's README).")
+            return
+        route(os.path.basename(path), circuit, n)
+        return
+
+    print(__doc__)                    # no argument: run the six built-in demos
+    run_demos()
 
 
 if __name__ == "__main__":

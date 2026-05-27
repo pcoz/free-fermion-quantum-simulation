@@ -1,0 +1,36 @@
+# A free-fermion (matchgate) circuit, in the plain "NAME qubits" format, on a
+# line of 16 qubits. EVERY gate is a matchgate acting on neighbouring qubits, so
+# the interacting-gate count is k = 0 and the router picks FREE FERMION -- even
+# though the circuit is highly non-Clifford (all those rotations) and builds
+# real entanglement (the central bond is exercised every layer).
+#
+# Try it:   python simulator_router.py examples/free_fermion.txt
+# Experiment: add a long-range or interacting line like `cx 0 8` (k -> 1) and
+# watch the free-fermion cost tick up by a notch, exactly as in the demo.
+qubits 16
+
+# layer 1: single-mode Z-rotations, then nearest-neighbour XY/Givens rotations
+rz 3
+rz 7
+rz 8
+rz 12
+xx_yy 0 1
+xx_yy 2 3
+xx_yy 6 7
+xx_yy 7 8
+xx_yy 8 9
+xx_yy 12 13
+xx_yy 14 15
+
+# layer 2: the staggered bonds, plus a couple of fermionic swaps
+xx_yy 1 2
+xx_yy 7 8
+fswap 4 5
+fswap 10 11
+
+# layer 3
+rz 7
+rz 8
+xx_yy 6 7
+xx_yy 7 8
+xx_yy 13 14
