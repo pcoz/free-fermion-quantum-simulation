@@ -57,10 +57,16 @@ structured slice — inside it, "intractable" becomes "milliseconds."
 
 ## What's inside
 
-| folder | what it shows | the "impossible" it does on silicon |
+Five worked examples, in two folders — [`free-fermion/`](free-fermion/) (the
+namesake) and [`roster-counting/`](roster-counting/):
+
+| example | what it shows | the "impossible" it does on silicon |
 |---|---|---|
-| [`free-fermion/`](free-fermion/) | the repo's namesake: classically simulating a free-fermion (matchgate) quantum system via its covariance matrix — a **2048-qubit** benchmark, **entanglement entropy** of a 512-qubit chain, the **Lieb–Robinson information light cone**, and **exact validation of a quantum processor** | computations a brute-force state vector (2ⁿ amplitudes) could never reach — *and* workflows only **exactness** unlocks: resolving signals ~10 orders below any sampling floor, and certifying hardware against a zero-error reference |
-| [`roster-counting/`](roster-counting/) | counting and **certifying the whole solution space** of a scheduling roster (how many, unique?, robust?, what's critical?) | the **exact** number of valid rosters for a layout with a ~50-digit count, in half a second — where enumeration could never finish |
+| [`free-fermion/ff_analog_twin.py`](free-fermion/ff_analog_twin.py) | simulating a free-fermion (matchgate) quantum system via its **covariance matrix**, raced against brute-force state-vector | a **2048-qubit** simulation in seconds — a state vector would need more numbers than there are atoms in the universe |
+| [`free-fermion/entanglement_entropy.py`](free-fermion/entanglement_entropy.py) | exact **entanglement entropy** of a quantum chain (the central measure of quantum correlation) | the entropy of a **512-qubit** chain in ~1 s, where brute force needs ~10¹⁵⁴ numbers |
+| [`free-fermion/lieb_robinson_lightcone.py`](free-fermion/lieb_robinson_lightcone.py) | the **information speed limit** — the Lieb–Robinson light cone — from exact correlations | exact to **256 qubits**, resolving signals **~10 orders of magnitude below** any sampling floor |
+| [`free-fermion/quantum_device_benchmark.py`](free-fermion/quantum_device_benchmark.py) | an **exact ground truth to validate a quantum processor** on a matchgate circuit | certifying a **128-qubit** device against a zero-error reference — no 2¹²⁸ state vector exists |
+| [`roster-counting/roster_solution_space.py`](roster-counting/roster_solution_space.py) | **counting and certifying** a scheduling roster's whole solution space (how many? unique? robust? what's critical?) | the **exact** count of valid rosters — a ~**50-digit** number — in ~0.5 s, where enumeration could never finish |
 
 ## Quick start
 
