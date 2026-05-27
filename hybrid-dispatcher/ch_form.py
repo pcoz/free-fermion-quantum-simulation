@@ -22,15 +22,18 @@ is checked against a brute-force state-vector backend in `self_test()`.
 Bit convention (matches the rest of the repo): qubit q is bit (n-1-q) of a basis
 index, so |x> sits at index sum_q x_q 2^(n-1-q).
 
-Scope of this build. Fully implemented and self-tested, poly-time and phase-exact:
-X, Z, S, CX, CZ, and H on a NOT-yet-superposed qubit. That already covers the common
-"Hadamard layer, then entangle" normal form -- including the dispatcher's Clifford
-half (`two_natured_circuit` applies its H's first). The one remaining case is H on an
-already-superposed qubit, whose phase update under the affine-form variable change is
-the intricate core of the full CH-form; it raises NotImplementedError here so the
-boundary is explicit rather than silently wrong. The point this module makes is the
-one that matters: a phase-exact stabilizer state can be carried in a polynomial
-(O(n*k)) object, never the 2^k support the dispatcher's other engine materialises.
+Scope. Fully general and self-tested, poly-time and phase-exact: X, Z, S, CX, CZ, and
+H ANYWHERE (including on already-entangled qubits). The easy gates update the
+affine-quadratic data in closed form. H on an already-superposed qubit -- the delicate
+core of the CH-form -- is handled without pushing the phase through the affine variable
+change by hand: the result is still a stabilizer state, so we evaluate its new
+amplitude function from the old form (one GF(2) solve per amplitude) and re-fit the
+affine-quadratic form to it (find the support, then read off the linear and quadratic
+phases), both polynomial. Validated against a state-vector backend on 1500 random
+Clifford circuits (500 of them with H anywhere), exactly, global phase included.
+
+The point: a phase-exact stabilizer state is carried in a polynomial O(n*k) object,
+never the 2^k support the dispatcher's explicit-superposition engine materialises.
 """
 import math
 
@@ -40,6 +43,54 @@ import numpy as np
 def _phase_i(p):
     """i**p for integer p (mod 4)."""
     return (1.0 + 0j, 1j, -1.0 + 0j, -1j)[p % 4]
+
+
+def _i_log(c):
+    """Inverse of _phase_i: which power of i is c (assumed a 4th root of unity)?"""
+    for p in range(4):
+        if abs(c - _phase_i(p)) < 1e-6:
+            return p
+    raise ValueError(f"not a 4th root of unity: {c}")
+
+
+def _gf2_solve(G, t):
+    """Solve G y = t over GF(2) for an n x k matrix G; return one solution y (k,) or
+    None if inconsistent. (When G has full column rank the solution is unique.)"""
+    n, k = G.shape
+    A = [[int(G[i, c]) for c in range(k)] + [int(t[i])] for i in range(n)]
+    pivots, row = {}, 0
+    for col in range(k):
+        sel = next((rr for rr in range(row, n) if A[rr][col]), None)
+        if sel is None:
+            continue
+        A[row], A[sel] = A[sel], A[row]
+        for rr in range(n):
+            if rr != row and A[rr][col]:
+                A[rr] = [A[rr][c] ^ A[row][c] for c in range(k + 1)]
+        pivots[col] = row
+        row += 1
+    for rr in range(n):                              # consistency check
+        if A[rr][k] == 1 and not any(A[rr][c] for c in range(k)):
+            return None
+    y = np.zeros(k, dtype=np.int8)
+    for col, rrow in pivots.items():
+        y[col] = A[rrow][k]
+    return y
+
+
+def _rref_basis(vecs, n):
+    """A GF(2) basis of the span of `vecs` (each an n-bit integer bitmask)."""
+    piv = {}                                         # highest set bit -> reduced vector
+    for v in vecs:
+        cur = v
+        while cur:
+            hb = cur.bit_length() - 1
+            if hb in piv:
+                cur ^= piv[hb]
+            else:
+                piv[hb] = cur
+                break
+    return list(piv.values())
 
 
 class CHForm:
@@ -103,11 +154,85 @@ class CHForm:
             self._add_free_var(col, 2 * int(self.b[a]))
             self.b[a] = 0
         else:
-            raise NotImplementedError(
-                "H on an already-superposed qubit -- the intricate core of the full "
-                "CH-form (phase update under the affine variable change). Out of scope "
-                "for this build; circuits with their Hadamards before any entangling "
-                "gate (e.g. the dispatcher's block A) stay in the supported fragment.")
+            self._h_superposed(a)
+
+    # -- amplitude access + the general (case-2) Hadamard ---------------------
+    def _xbits(self, z):
+        return np.array([(z >> (self.n - 1 - q)) & 1 for q in range(self.n)], dtype=np.int8)
+
+    def _index(self, xb):
+        z = 0
+        for q in range(self.n):
+            if xb[q]:
+                z |= 1 << (self.n - 1 - q)
+        return z
+
+    def amp(self, z):
+        """Exact amplitude <z|psi> in poly time: solve G y = (x XOR b) over GF(2)
+        (unique, since G has full column rank), then evaluate the phase."""
+        xb = self._xbits(z)
+        y = _gf2_solve(self.G, (xb ^ self.b) % 2) if self.k else (np.zeros(0, np.int8)
+                                                                  if not (xb ^ self.b).any() else None)
+        if y is None:
+            return 0.0 + 0j
+        lt = int(self.lin @ y) % 4 if self.k else 0
+        qt = int(y @ self.quad @ y) % 2 if self.k else 0
+        return self.omega * 2.0 ** (-self.k / 2) * _phase_i(lt) * ((-1) ** qt)
+
+    def _h_superposed(self, a):
+        """H on an already-superposed qubit. The result is still a stabilizer state,
+        so rather than push the phase through the affine variable change by hand (the
+        delicate core of the CH-form), we evaluate the NEW amplitude function exactly
+        from the old form and re-fit the affine-quadratic form to it -- both poly-time.
+
+            <z|psi'> = 2^(-1/2) ( <z|a=0> + (-1)^z_a <z|a=1> )  (old amplitudes)."""
+        amask = 1 << (self.n - 1 - a)
+        inv = 1.0 / math.sqrt(2)
+
+        def g(z):                                    # new amplitude at basis state z
+            za = (z >> (self.n - 1 - a)) & 1
+            return inv * (self.amp(z & ~amask) + (-1) ** za * self.amp(z | amask))
+
+        # 1) Collect support points of the NEW state. Its support lies in the affine
+        #    span of the old support and e_a, so old support points with bit a freed
+        #    are enough to span it; sample y = 0, each e_i, and a few random y.
+        ys = [np.zeros(self.k, np.int8)]
+        for i in range(self.k):
+            e = np.zeros(self.k, np.int8); e[i] = 1; ys.append(e)
+        rng = np.random.default_rng(12345)
+        for _ in range(2 * self.k + 4):
+            ys.append(rng.integers(0, 2, size=self.k).astype(np.int8))
+        support = []
+        seen = set()
+        for y in ys:
+            xb = (self.b ^ ((self.G @ y) % 2)) % 2 if self.k else self.b.copy()
+            base = self._index(xb)
+            for z in (base & ~amask, base | amask):
+                if z not in seen and abs(g(z)) > 1e-9:
+                    seen.add(z); support.append(z)
+
+        # 2) b' = a support point; directions = a GF(2) basis of {z XOR b'}.
+        bp = support[0]
+        basis = _rref_basis([z ^ bp for z in support], self.n)
+        kp = len(basis)
+
+        # 3) Read omega, the linear phases (single directions) and quadratic phases
+        #    (pairs) straight off the amplitude function.
+        g0 = g(bp)
+        omega = g0 * 2.0 ** (kp / 2)
+        lin = np.zeros(kp, dtype=np.int8)
+        for i in range(kp):
+            lin[i] = _i_log(g(bp ^ basis[i]) / g0)
+        quad = np.zeros((kp, kp), dtype=np.int8)
+        for i in range(kp):
+            for j in range(i + 1, kp):
+                ph = g(bp ^ basis[i] ^ basis[j]) / g0
+                quad[i, j] = 0 if abs(ph / _phase_i((lin[i] + lin[j]) % 4) - 1) < 1e-6 else 1
+
+        # 4) Install the refitted form (columns of G' are the basis directions).
+        self.b = self._xbits(bp)
+        self.G = np.array([self._xbits(d) for d in basis], dtype=np.int8).T.reshape(self.n, kp)
+        self.lin, self.quad, self.omega, self.k = lin, quad, omega, kp
 
     def cx(self, a, b):
         # CX permutes basis states (x_b -> x_a XOR x_b), no phase. As a map on y:
@@ -225,6 +350,17 @@ def self_test():
             ops.append((name, _random_2q(rng, n) if name in _MAT2 else int(rng.integers(n))))
         assert np.allclose(_run_chform(n, ops), _reference(n, ops), atol=1e-12), ops
     print("  [piece 2 OK: + CX, CZ on entangled states, phase-exact on 500 circuits]")
+
+    # Piece 3: FULLY GENERAL random Clifford circuits -- H anywhere, including on
+    # already-entangled qubits (the case-2 Hadamard, handled by amplitude re-fit).
+    for _ in range(500):
+        n = int(rng.integers(2, 6))
+        ops = []
+        for _ in range(int(rng.integers(1, 25))):
+            name = str(rng.choice(["H", "S", "X", "Z", "CX", "CZ"]))
+            ops.append((name, _random_2q(rng, n) if name in _MAT2 else int(rng.integers(n))))
+        assert np.allclose(_run_chform(n, ops), _reference(n, ops), atol=1e-12), ops
+    print("  [piece 3 OK: fully general Clifford (H anywhere) phase-exact on 500 circuits]")
 
     # The dispatcher's block A shape: a few Hadamards FIRST, then a CX chain, S, CZ.
     # This is exactly the supported fragment; show it is exact and that the carried

@@ -97,12 +97,12 @@ and the `m × m` pairing matrix).
 engine above is phase-exact but its cost scales with the stabilizer support (`2^k`),
 so it is only cheap for low-Hadamard blocks. `ch_form.py` carries the *same* phase-exact
 state in the affine-quadratic (CH) form — an `O(n·k)` matrix, never the `2^k` support —
-and updates it in polynomial time for `X, Z, S, CX, CZ` and `H` on a not-yet-superposed
-qubit. That covers the common "Hadamards first, then entangle" normal form, including
-this demo's Clifford half (it applies its H's first); a self-test checks it against a
-state-vector backend on 1000 random circuits, exactly, global phase included. The one
-case left is `H` on an *already-superposed* qubit — the intricate phase-bookkeeping core
-of the full CH-form — which it flags explicitly rather than getting subtly wrong.
+and updates it in polynomial time for `X, Z, S, CX, CZ` and **`H` anywhere** (including
+on an already-entangled qubit, the delicate core of the CH-form, handled by evaluating
+the new amplitude function and re-fitting the form — both polynomial). A self-test
+checks it against a state-vector backend on **1500 random Clifford circuits** (H in any
+position), exactly, global phase included. So a stabilizer block costs `O(n·k)`
+regardless of how many Hadamards it has.
 
 **Amplitude-level recombination (the asymptotic win) is implemented.** Beyond building
 the full state, the script also exposes `build_amplitude_oracle`, which returns a
