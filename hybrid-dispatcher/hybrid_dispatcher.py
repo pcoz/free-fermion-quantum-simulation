@@ -47,6 +47,11 @@ carry its correct GLOBAL phase, or the branches interfere wrongly.
   the pairing matrix is the genuine poly object; reconstructing the full vector here
   costs one Pfaffian per amplitude (the readout).
 
+Amplitude-level recombination (the asymptotic win): `build_amplitude_oracle` returns a
+function giving any single output amplitude <x|U_full|0> with NO 2^n vector ever built
+-- it factorises into one stabilizer-amplitude lookup, one Pfaffian (block B), and a
+sum over the few branches, all polynomial. So you compute only the outcomes you want.
+
 Both engines are validated by self-tests against the universal backend on random
 circuits, exactly (global phase included), before the dispatcher runs.
 

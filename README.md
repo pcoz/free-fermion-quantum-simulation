@@ -224,8 +224,8 @@ cd ../hybrid-dispatcher          # split a circuit across simulators, pay for th
 python hybrid_dispatcher.py
 ```
 
-Each subfolder has its own README explaining the maths in plain terms, the
-honest scope, and a short glossary.
+Each subfolder has its own README explaining the maths in plain terms and the
+honest scope.
 
 ## Built on holant-tools
 
