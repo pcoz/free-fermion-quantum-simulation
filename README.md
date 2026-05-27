@@ -6,7 +6,9 @@ hidden structure.** Plain Python (`numpy`, `sympy`, and
 [`holant-tools`](https://github.com/pcoz/holant-tools), which supplies the core
 algorithms) — no quantum hardware, no GPU, no cluster.
 
-### The idea
+---
+
+### The idea: hidden structure makes hard problems exact
 
 Many important calculations *look* intractable because the obvious way to do them
 blows up exponentially:
@@ -33,6 +35,8 @@ problem that looks impossible, exploits its structure, and produces an **exact**
 answer on an ordinary laptop in milliseconds to seconds — at sizes brute force
 could never reach.
 
+---
+
 ### Unlocking things you can't do with standard algorithmic approaches
 
 The win is not just speed — it's that the answers are **exact** (not sampled,
@@ -53,6 +57,8 @@ otherwise out of reach:
 
 In every case, *exactness is the enabler*: an approximate answer carries error you
 cannot separate from the quantity you are trying to measure or certify.
+
+---
 
 ### Limitations
 
@@ -110,17 +116,18 @@ basic reason: a system of *n* quantum particles is described by **2ⁿ** numbers
 the memory needed doubles with every particle you add. By a few dozen particles
 that already exceeds the number of atoms in the universe, and storing the state
 outright — the "state vector" approach — becomes impossible. This is the wall that
-motivates building quantum computers in the first place.
+motivated building quantum computers in the first place.
 
 But that wall is not uniform. Over the decades, physicists have found that *many*
 quantum systems of practical interest carry some special **structure** — and that
 structure can be exploited to simulate them on a classical computer after all,
 without ever writing down all 2ⁿ numbers. The catch is that there is **no single
 method**: each known technique exploits a *different* kind of structure, works
-brilliantly when that structure is present, and fails when it isn't. Classical
-quantum simulation is therefore best understood as a **toolbox**, and choosing the
-tool whose assumption matches your problem is what determines whether the
-simulation is feasible at all:
+brilliantly when that structure is present, and fails when it isn't.
+
+Classical quantum simulation is therefore best understood as a **toolbox**, and
+choosing the tool whose assumption matches your problem is what determines whether
+the simulation is feasible at all:
 
 | method | structure it exploits | exact? | where it wins / where it stops |
 |---|---|---|---|
