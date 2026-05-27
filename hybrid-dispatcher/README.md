@@ -90,8 +90,15 @@ structure invisible in the whole circuit: each half is cheap under a different m
 Circuit cutting is exact and general, but its cost is **multiplicative in the number
 of crossing gates** (branches grow with each crossing gate's Pauli rank), so it wins
 when the cut is narrow — the regime the router's entanglement meter `w` detects. Both
-engines are phase-exact; their *compact* objects are poly (the stabilizer support and
-the `m × m` pairing matrix), and reconstructing a full block statevector here is a
-readout cost (one Pfaffian per amplitude for the free-fermion block). Doing the
-recombination at the **amplitude level** — never materialising a full block vector —
-is the route to the full asymptotic win, and is the natural next refinement.
+engines are phase-exact, and their *compact* objects are poly (the stabilizer support
+and the `m × m` pairing matrix).
+
+**Amplitude-level recombination (the asymptotic win) is implemented.** Beyond building
+the full state, the script also exposes `build_amplitude_oracle`, which returns a
+function `amp(x)` giving any single output amplitude `<x|U|0>` with **no 2ⁿ vector
+ever built**: it factorises as `α_A(x_A)·α_B(x_B)·Σ_branches(coeff·signs)`, where
+`α_A` is one stabilizer-amplitude lookup, `α_B` is **one Pfaffian** over the occupied
+modes of `x_B`, and the branch sum is over the few crossing branches — all polynomial
+per amplitude. A run checks a sample of these against brute force exactly. So you can
+compute just the outcomes you care about (e.g. the most likely ones), where brute
+force must first build all 2ⁿ amplitudes.

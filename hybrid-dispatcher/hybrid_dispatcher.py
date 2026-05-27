@@ -153,6 +153,10 @@ class StabilizerSim:
                 new[x | mask] += a * inv * sign
             self.amp = {x: a for x, a in new.items() if abs(a) > 1e-12}
 
+    def amplitude(self, x):
+        """A single amplitude <x|psi> -- just a lookup in the (sparse) support."""
+        return self.amp.get(x, 0.0 + 0j)
+
     def statevector(self):
         psi = np.zeros(2 ** self.m, dtype=complex)
         for x, a in self.amp.items():
@@ -160,10 +164,15 @@ class StabilizerSim:
         return psi
 
 
-def run_stabilizer(m, named_ops):
+def stab_engine(m, named_ops):
     sim = StabilizerSim(m)
     for name, qs in named_ops:
         sim.apply(name, qs)
+    return sim
+
+
+def run_stabilizer(m, named_ops):
+    sim = stab_engine(m, named_ops)
     return sim.statevector(), len(sim.amp)
 
 
@@ -243,22 +252,27 @@ class FreeFermionSim:
             self.A[i, j], self.A[j, i] = -1j * math.tan(th), 1j * math.tan(th)
             self.v *= math.cos(th)
 
+    def amplitude(self, x):
+        # <x|psi> = <0|psi> * Pf(A restricted to the modes occupied in x). One Pfaffian.
+        # Odd occupation -> 0 (the state lives in the even-parity sector).
+        S = [q for q in range(self.m) if (x >> (self.m - 1 - q)) & 1]      # occupied modes
+        if len(S) % 2 == 1:
+            return 0.0 + 0j
+        return self.v * pfaffian(self.A[np.ix_(S, S)])
+
     def statevector(self):
-        # Amplitude of basis state x: <x|psi> = <0|psi> * Pf(A restricted to the modes
-        # occupied in x). Odd occupation -> 0 (the state lives in the even-parity sector).
-        psi = np.zeros(2 ** self.m, dtype=complex)
-        for x in range(2 ** self.m):
-            S = [q for q in range(self.m) if (x >> (self.m - 1 - q)) & 1]   # occupied modes
-            if len(S) % 2 == 0:
-                psi[x] = self.v * pfaffian(self.A[np.ix_(S, S)])
-        return psi
+        return np.array([self.amplitude(x) for x in range(2 ** self.m)], dtype=complex)
 
 
-def run_freefermion(m, named_param_ops):
+def ff_engine(m, named_param_ops):
     sim = FreeFermionSim(m)
     for name, qs, param in named_param_ops:
         sim.apply(name, qs, param)
-    return sim.statevector()
+    return sim
+
+
+def run_freefermion(m, named_param_ops):
+    return ff_engine(m, named_param_ops).statevector()
 
 
 # --- per-block routing (the same meters as ../simulator-router/) --------------
@@ -300,21 +314,15 @@ def _sign_mask(m, z_qubits):
 
 
 # --- the hybrid: cut, route each half, run A and B on their own engines -------
-def simulate_by_cutting(n, circuit):
-    """Cut `circuit` (list of (name, U, qubits, param)) down the middle into blocks
-    A | B, route and run each block on its own engine, and recombine to the exact
-    state. Crossing gates are Pauli-decomposed; because we cut with CZ the injected
-    factors are diagonal (I/Z), so each block's base state is computed ONCE (block A
-    on the stabilizer engine, block B on the free-fermion engine) and every branch is
-    just a cheap +-1 sign mask times that base state. Returns the recombined state,
-    the branch count, and each half's routing."""
+def _partition(n, circuit):
+    """Split a circuit (list of (name, U, qubits, param)) into the two blocks. Returns
+    cut, block-A gates as (name, locqs), block-B gates as (name, locqs, param), the
+    native gate names of each block (for routing), and the crossing gates (each with
+    its Pauli decomposition and the local qubits it touches on A and B)."""
     cut = n // 2
     in_A = lambda q: q < cut
     locA, locB = (lambda q: q), (lambda q: q - cut)
-
-    aNamed, bParam = [], []      # block A: (name, locqs);  block B: (name, locqs, param)
-    aNames, bNames = [], []      # native gate names for routing
-    crossing = []                # (terms, aq_local, bq_local, a_is_first)
+    aNamed, bParam, aNames, bNames, crossing = [], [], [], [], []
     for (name, U, qs, param) in circuit:
         if len(qs) == 1:
             if in_A(qs[0]):
@@ -329,19 +337,18 @@ def simulate_by_cutting(n, circuit):
             q0, q1 = qs
             aq, bq = (q0, q1) if in_A(q0) else (q1, q0)
             crossing.append((pauli_decomposition(U), locA(aq), locB(bq), in_A(q0)))
+    return cut, aNamed, bParam, aNames, bNames, crossing
 
+
+def _branches(crossing):
+    """Expand the crossing gates' Pauli decompositions into branches. Each branch is
+    (coeff, za, zb): the product of chosen Pauli coefficients, and the local qubits
+    receiving an injected Z on block A and block B. Because we cut with CZ, the injected
+    factors are only I or Z (diagonal), so a Z is just a +-1 sign on the block state."""
     ranks = [len(c[0]) for c in crossing]
-    n_branches = int(np.prod(ranks)) if ranks else 1
-    routeA, routeB = route_block(aNames, cut), route_block(bNames, n - cut)
-
-    # Each block's base state, computed ONCE on its own engine.
-    phiA, supportA = run_stabilizer(cut, aNamed)        # block A: stabilizer engine
-    phiB = run_freefermion(n - cut, bParam)             # block B: free-fermion engine
-
-    full = np.zeros(2 ** cut * 2 ** (n - cut), dtype=complex)
+    out = []
     for choice in (itertools.product(*[range(r) for r in ranks]) if ranks else [()]):
-        coeff = 1.0 + 0j
-        za, zb = [], []                                  # injected Z qubits per block
+        coeff, za, zb = 1.0 + 0j, [], []
         for ci, (terms, aq, bq, a_is_first) in enumerate(crossing):
             c, pn, qn = terms[choice[ci]]
             coeff *= c
@@ -351,12 +358,67 @@ def simulate_by_cutting(n, circuit):
                 za.append(aq)
             if b_p == "Z":
                 zb.append(bq)
-        stateA = _sign_mask(cut, za) * phiA              # diagonal Z's = cheap sign masks
-        stateB = _sign_mask(n - cut, zb) * phiB
-        full += coeff * np.kron(stateA, stateB)
+        out.append((coeff, za, zb))
+    return out
 
-    return {"state": full, "branches": n_branches, "n_crossing": len(crossing),
+
+def simulate_by_cutting(n, circuit):
+    """Cut the circuit down the middle, route and run each block on its own engine,
+    and recombine to the FULL exact state. Because the injected factors are diagonal,
+    each block's base state is computed ONCE (block A on the stabilizer engine, block B
+    on the free-fermion engine) and every branch is a cheap +-1 sign mask times it."""
+    cut, aNamed, bParam, aNames, bNames, crossing = _partition(n, circuit)
+    routeA, routeB = route_block(aNames, cut), route_block(bNames, n - cut)
+    phiA, supportA = run_stabilizer(cut, aNamed)        # block A base state, once
+    phiB = run_freefermion(n - cut, bParam)             # block B base state, once
+
+    full = np.zeros(2 ** cut * 2 ** (n - cut), dtype=complex)
+    for coeff, za, zb in _branches(crossing):
+        full += coeff * np.kron(_sign_mask(cut, za) * phiA, _sign_mask(n - cut, zb) * phiB)
+
+    return {"state": full, "branches": len(_branches(crossing)), "n_crossing": len(crossing),
             "routeA": routeA, "routeB": routeB, "supportA": supportA}
+
+
+def build_amplitude_oracle(n, circuit):
+    """The asymptotic payoff of the cut: return a function amp(x) giving the exact
+    output amplitude <x|U_full|0> WITHOUT ever building a 2^n vector.
+
+    Because every block's native circuit is fixed and the injected cut factors are
+    diagonal, a single output amplitude factorises:
+
+        <x|U_full|0> = alpha_A(x_A) * alpha_B(x_B) * sum_branches coeff * (+-1 signs),
+
+    where alpha_A(x_A) = <x_A|C_A|0> is one stabilizer-amplitude lookup, alpha_B(x_B)
+    = <x_B|U_B|0> is ONE Pfaffian over the occupied modes of x_B, and the branch sum is
+    over the (few) crossing branches. Each call is polynomial; no 2^n state ever exists."""
+    cut, aNamed, bParam, aNames, bNames, crossing = _partition(n, circuit)
+    stab = stab_engine(cut, aNamed)             # provides alpha_A via .amplitude
+    ff = ff_engine(n - cut, bParam)             # provides alpha_B via .amplitude (one Pfaffian)
+    branches = _branches(crossing)
+    nB = n - cut
+
+    def amp(x):
+        xA, xB = x >> nB, x & ((1 << nB) - 1)   # split the global index into A and B bits
+        aA = stab.amplitude(xA)
+        if aA == 0:
+            return 0.0 + 0j
+        aB = ff.amplitude(xB)
+        if aB == 0:
+            return 0.0 + 0j
+        s = 0.0 + 0j                            # sum over branches of coeff * Z-signs
+        for coeff, za, zb in branches:
+            sgn = 1
+            for q in za:                        # injected Z on block A flips sign if x_A bit set
+                if (xA >> (cut - 1 - q)) & 1:
+                    sgn = -sgn
+            for q in zb:
+                if (xB >> (nB - 1 - q)) & 1:
+                    sgn = -sgn
+            s += coeff * sgn
+        return aA * aB * s
+
+    return amp, len(branches), cut, nB
 
 
 # --- a two-natured demonstration circuit -------------------------------------
@@ -479,6 +541,26 @@ def main():
     print(f"    cut + route each half ......... {out['branches']} x (2^{int(round(math.log2(out['supportA'])))} "
           f"+ 2^{cB:.1f}) = {cut_cost:,.0f}   ({brute / cut_cost:.0f}x less than brute force)")
 
+    # --- amplitude-level recombination: any single outcome, no 2^n vector ----
+    print("\n" + "=" * 74)
+    print("Amplitude-level recombination -- any single outcome, no 2^n vector built")
+    print("=" * 74)
+    amp, nbr, _, nB = build_amplitude_oracle(n, circuit)
+    rng = np.random.default_rng(7)
+    nz = [int(x) for x in np.nonzero(np.abs(truth) > 1e-12)[0]]      # nonzero outcomes
+    sample = [int(x) for x in rng.choice(nz, size=min(300, len(nz)), replace=False)]
+    sample += [int(x) for x in rng.integers(2 ** n, size=50)]        # include some zeros
+    ok2 = all(abs(amp(x) - truth[x]) < 1e-10 for x in sample)
+    print(f"  checked {len(sample)} output amplitudes (including zeros) against brute "
+          f"force: {'all match' if ok2 else 'MISMATCH'}")
+    assert ok2, "amplitude oracle disagreed with brute force!"
+    for x in (nz[0], nz[len(nz) // 2], nz[-1]):      # three distinct nonzero outcomes
+        print(f"    <{x:0{n}b}|U|0> = {amp(x): .5f}   (brute force {truth[x]: .5f})")
+    print(f"\n  Cost of ONE amplitude: 1 stabilizer lookup + 1 Pfaffian over <= {nB} modes")
+    print(f"  + a sum over {nbr} branches -- a few thousand operations, and NO 2^{n} vector")
+    print(f"  is ever built. Want the 100 most-likely outcomes? ~100x that. Brute force")
+    print(f"  must first build all 2^{n} = {2 ** n:,} amplitudes.")
+
     print("\n" + "=" * 74)
     print("The point")
     print("=" * 74)
@@ -486,7 +568,8 @@ def main():
     print("  cheap -- along DIFFERENT axes. The dispatcher cuts, routes every piece to")
     print("  its own member, and runs it there: block A on a phase-aware stabilizer")
     print("  engine, block B on a free-fermion (pairing-matrix + Pfaffian) engine. Both")
-    print("  are phase-exact, so the cut recombines to the verified brute-force answer.")
+    print("  are phase-exact, and amplitude-level recombination delivers any individual")
+    print("  outcome in polynomial work -- the cut never builds a 2^n vector at all.")
 
 
 if __name__ == "__main__":
