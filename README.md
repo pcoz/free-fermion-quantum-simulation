@@ -71,13 +71,13 @@ namesake), [`ising-phase-transition/`](ising-phase-transition/),
 
 | example | what it shows (and why it matters) | the "impossible" done on silicon |
 |---|---|---|
-| [`ff_analog_twin.py`](free-fermion/ff_analog_twin.py) | Simulate a quantum system (a chain of magnetic spins) on an ordinary computer. Quantum systems are famously hard to simulate because the bookkeeping doubles with every particle added — this special "free-fermion" family sidesteps that. | a **2048-qubit** simulation in seconds — a state vector would need more numbers than there are atoms in the universe |
-| [`entanglement_entropy.py`](free-fermion/entanglement_entropy.py) | Measure how *entangled* a quantum system is. Entanglement is the resource behind quantum computing and the fingerprint of exotic phases of matter — and it normally needs the full exponential state to compute. | the entropy of a **512-qubit** chain in ~1 s, where brute force needs ~10¹⁵⁴ numbers |
-| [`lieb_robinson_lightcone.py`](free-fermion/lieb_robinson_lightcone.py) | Watch how fast information spreads through a quantum material. There's an emergent "speed of light" (the Lieb–Robinson bound) that caps how quickly a disturbance can travel — it limits how fast quantum computers and quantum communication can ever be. | exact to **256 qubits**, resolving signals **~10 orders of magnitude below** any sampling floor |
-| [`quantum_device_benchmark.py`](free-fermion/quantum_device_benchmark.py) | Check whether a real quantum computer actually did what it claimed, by comparing its output to an exact answer computed classically. Validating quantum hardware needs a trusted reference — which normally doesn't exist at large sizes. | certifying a **128-qubit** processor against a zero-error reference — no 2¹²⁸ state vector exists |
-| [`ising_phase_transition.py`](ising-phase-transition/ising_phase_transition.py) | Compute exactly when a magnet abruptly loses its magnetism as it's heated — a "phase transition", like water boiling. The 2D Ising model is the textbook case, and it's exactly solvable *because it is secretly a free-fermion system*. | the exact **critical temperature** and critical exponent (1/8), which simulation can only estimate with error bars |
-| [`network_reliability.py`](network-reliability/network_reliability.py) | Compute the exact risk of a large simultaneous outage in a planar utility/telecom grid when failures are *correlated* (a storm takes out neighbouring lines together). Assuming failures are independent badly underestimates that risk; sampling never sees the rare, costly tail. | the **exact** probability of a major outage, where Monte-Carlo reports **zero** |
-| [`roster_solution_space.py`](roster-counting/roster_solution_space.py) | Count and audit *all* valid staff rosters at once — how many exist, is the schedule forced, which assignment is a single point of failure — instead of just finding one. Schedulers return one answer; the whole solution space is assumed too big to explore. | the **exact** count of valid rosters — a ~**50-digit** number — in ~0.5 s, where enumeration could never finish |
+| [`ff_analog_twin.py`](free-fermion/ff_analog_twin.py) | **Simulate a quantum system** (a chain of magnetic spins) on an ordinary computer. Quantum systems are famously hard to simulate because the bookkeeping **doubles with every particle added** — this special **free-fermion** family sidesteps that. | a **2048-qubit** simulation in seconds — a state vector would need more numbers than there are atoms in the universe |
+| [`entanglement_entropy.py`](free-fermion/entanglement_entropy.py) | **Measure how entangled a quantum system is.** Entanglement is the **resource behind quantum computing** and the fingerprint of exotic phases of matter — and it normally needs the **full exponential state** to compute. | the entropy of a **512-qubit** chain in ~1 s, where brute force needs ~10¹⁵⁴ numbers |
+| [`lieb_robinson_lightcone.py`](free-fermion/lieb_robinson_lightcone.py) | **Watch how fast information spreads** through a quantum material. There's an emergent **"speed of light"** (the Lieb–Robinson bound) that caps how quickly a disturbance can travel — it **limits how fast quantum computers and quantum communication can ever be**. | exact to **256 qubits**, resolving signals **~10 orders of magnitude below** any sampling floor |
+| [`quantum_device_benchmark.py`](free-fermion/quantum_device_benchmark.py) | **Check whether a real quantum computer actually did what it claimed**, by comparing its output to an exact answer computed classically. Validating quantum hardware needs a **trusted reference** — which normally **doesn't exist at large sizes**. | certifying a **128-qubit** processor against a zero-error reference — no 2¹²⁸ state vector exists |
+| [`ising_phase_transition.py`](ising-phase-transition/ising_phase_transition.py) | **Compute exactly when a magnet abruptly loses its magnetism** as it's heated — a **phase transition**, like water boiling. The 2D Ising model is the textbook case, and it's exactly solvable *because it is secretly a **free-fermion system***. | the exact **critical temperature** and critical exponent (1/8), which simulation can only estimate with error bars |
+| [`network_reliability.py`](network-reliability/network_reliability.py) | **Compute the exact risk of a large simultaneous outage** in a planar utility/telecom grid when failures are **correlated** (a storm takes out neighbouring lines together). Assuming failures are independent **badly underestimates that risk**; sampling never sees the rare, costly tail. | the **exact** probability of a major outage, where Monte-Carlo reports **zero** |
+| [`roster_solution_space.py`](roster-counting/roster_solution_space.py) | **Count and audit *all* valid staff rosters at once** — how many exist, is the schedule forced, which assignment is a **single point of failure** — instead of just finding one. Schedulers return one answer; **the whole solution space is assumed too big to explore**. | the **exact** count of valid rosters — a ~**50-digit** number — in ~0.5 s, where enumeration could never finish |
 
 ## Quick start
 
@@ -103,11 +103,24 @@ python roster_solution_space.py
 Each subfolder has its own README explaining the maths in plain terms, the
 honest scope, and a short glossary.
 
-## Where this fits among ways of simulating quantum systems
+## Where this repository sits among other quantum simulation systems
 
-Classically simulating a quantum system isn't one method but a toolbox, and each
-tool works by exploiting a *different* kind of structure. Knowing which tool fits
-which problem is the whole game:
+Simulating a quantum system on an ordinary (classical) computer is hard for one
+basic reason: a system of *n* quantum particles is described by **2ⁿ** numbers, so
+the memory needed doubles with every particle you add. By a few dozen particles
+that already exceeds the number of atoms in the universe, and storing the state
+outright — the "state vector" approach — becomes impossible. This is the wall that
+motivates building quantum computers in the first place.
+
+But that wall is not uniform. Over the decades, physicists have found that *many*
+quantum systems of practical interest carry some special **structure** — and that
+structure can be exploited to simulate them on a classical computer after all,
+without ever writing down all 2ⁿ numbers. The catch is that there is **no single
+method**: each known technique exploits a *different* kind of structure, works
+brilliantly when that structure is present, and fails when it isn't. Classical
+quantum simulation is therefore best understood as a **toolbox**, and choosing the
+tool whose assumption matches your problem is what determines whether the
+simulation is feasible at all:
 
 | method | structure it exploits | exact? | where it wins / where it stops |
 |---|---|---|---|
