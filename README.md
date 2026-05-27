@@ -1,4 +1,4 @@
-# free-fermion-quantum-simulation
+# Free Fermion Quantum Simulation
 
 **Worked examples and practical applications of classical "structure-exploiting"
 computation** — built on the [`holant-tools`](https://github.com/pcoz/holant-tools)
@@ -14,7 +14,7 @@ hardware, no GPU, no cluster.
 
 | folder | what it shows | the "impossible" it does on silicon |
 |---|---|---|
-| [`free-fermion/`](free-fermion/) | the repo's namesake: classically simulating a free-fermion (matchgate) quantum system via its covariance matrix, and computing **entanglement entropy** | a **2048-qubit** simulation and the entanglement entropy of a **512-qubit** chain — where the brute-force state vector would need more numbers than there are atoms in the universe |
+| [`free-fermion/`](free-fermion/) | the repo's namesake: classically simulating a free-fermion (matchgate) quantum system via its covariance matrix — a **2048-qubit** benchmark, **entanglement entropy** of a 512-qubit chain, the **Lieb–Robinson information light cone**, and **exact validation of a quantum processor** | computations a brute-force state vector (2ⁿ amplitudes) could never reach — *and* workflows only **exactness** unlocks: resolving signals ~10 orders below any sampling floor, and certifying hardware against a zero-error reference |
 | [`roster-counting/`](roster-counting/) | counting and **certifying the whole solution space** of a scheduling roster (how many, unique?, robust?, what's critical?) | the **exact** number of valid rosters for a layout with a ~50-digit count, in half a second — where enumeration could never finish |
 
 ## Quick start

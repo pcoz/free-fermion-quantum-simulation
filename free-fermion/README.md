@@ -1,4 +1,4 @@
-# Free-fermion analog twin
+# Free-fermion quantum simulation
 
 A small, runnable demonstration that **one special family of quantum systems can
 be simulated on an ordinary computer astonishingly fast** — thousands of qubits
@@ -30,8 +30,10 @@ as its engine.
 
 ```bash
 pip install holant-tools numpy sympy
-python ff_analog_twin.py        # the benchmark: free-fermion vs brute force
-python entanglement_entropy.py  # worked example: a normally-impossible computation
+python ff_analog_twin.py            # the benchmark: free-fermion vs brute force
+python entanglement_entropy.py      # entanglement entropy of a 512-qubit chain
+python lieb_robinson_lightcone.py   # the speed limit on information (light cone)
+python quantum_device_benchmark.py  # exact reference to validate a quantum processor
 ```
 
 `ff_analog_twin.py` shows three things: (1) the fast method agrees with the
@@ -106,6 +108,29 @@ covariance matrix's eigenvalues (Vidal–Latorre–Rico–Kitaev / Peschel) — 
 O(n³), not 2ⁿ. This is "the impossible running on silicon," demonstrated with the
 repo itself.
 
+## More worked examples: where *exactness* unlocks a new workflow
+
+Two further examples show that being **exact** (not approximate or sampled) isn't
+a nicety — it enables things you otherwise cannot do at all:
+
+- **`lieb_robinson_lightcone.py` — the speed limit on information.** Tracks the
+  connected correlation `C(0, r, t)` as the chain evolves, drawing the
+  Lieb–Robinson "light cone": correlations spread at a finite velocity, reaching
+  distance *r* only after a time proportional to *r*. Runs to **n = 256**, far
+  past any state vector. *Exactness payoff:* it resolves correlations **~10 orders
+  of magnitude below any sampling floor** (a device or Monte-Carlo estimate has
+  shot noise ~1/√shots ≳ 1e-3), exposing the smooth exponential *precursor* beyond
+  the cone that sampled methods see as flat zero — a measurement workflow shot
+  noise makes impossible.
+- **`quantum_device_benchmark.py` — validating a quantum processor.** Uses the
+  exact free-fermion output as a **certified ground truth** to benchmark a (here
+  simulated) **128-qubit** processor running a matchgate circuit. *Exactness
+  payoff:* no 2ⁿ reference exists at that scale, and only an *exact* reference
+  attributes every deviation to the hardware — so a real acceptance tolerance
+  becomes enforceable. An approximate reference with error e_ref could never
+  certify the device below e_ref; the script demonstrates it mis-classifying
+  pass/fail qubits.
+
 ## Honest scope — what the gains do and don't mean
 
 - The speedup is **exponential over naive state-vector simulation**, *purely
@@ -166,8 +191,12 @@ fast twin that lives right on it.
 
 - `ff_analog_twin.py` — the benchmark: correctness check, the `FreeFermionCircuit`
   vs state-vector timing race, and the NumPy fast-path twin to 2048 qubits.
-- `entanglement_entropy.py` — the worked example: entanglement entropy of a
-  512-qubit chain (verified at small sizes, then run where brute force can't).
+- `entanglement_entropy.py` — entanglement entropy of a 512-qubit chain (verified
+  at small sizes, then run where brute force can't).
+- `lieb_robinson_lightcone.py` — the information speed limit (Lieb–Robinson light
+  cone), exact to n = 256; shows what resolving below the sampling floor unlocks.
+- `quantum_device_benchmark.py` — exact ground-truth to validate a quantum
+  processor on a matchgate circuit (a QA workflow only an exact reference enables).
 - `README.md` — this file.
 
 ## Requirements
