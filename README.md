@@ -118,44 +118,53 @@ structure for any classical method to exploit — and that is exactly the regime
 quantum computer is for. This repo takes one of those axes, the free-fermion one,
 to its exact, large-scale conclusion, and shows where it ends.
 
-## How these methods combine
+## Combining the family: one dispatcher across the methods
 
-The members of this family are not islands. Because each method only has to pay for
-the *part* of a problem that breaks its assumption, the methods can be **wired
-together** — handle the bulk with a cheap structured method, and pay an exponential
-price only in the small amount of "hard" stuff left over. Several of these hybrids
-are workhorses of real research:
+The members of this family need not compete — they can be **combined**. Each method
+only pays for the *part* of a problem that breaks its assumption, so the right move
+is often not to pick one simulator but to hand each piece of a problem to whichever
+member handles it cheaply. The precedents below show this already works in pieces;
+the proposal at the end is a way to do it automatically.
 
-- **Quantum Monte Carlo already has the free-fermion method as its inner kernel.**
-  Auxiliary-field QMC takes an *interacting* system, mathematically splits the
-  interaction into a sum over many *non-interacting* (free-fermion) problems, solves
-  each one exactly with a determinant or **Pfaffian** — the very computation this
-  repo's engine performs — and samples over the rest. The notorious "sign problem"
-  is precisely the case where those free-fermion weights turn negative.
-- **Free fermion + a few interacting gates** is the exact mirror of *Clifford + a
-  few T-gates*. Just as a near-Clifford circuit costs roughly 2^(0.23·*t*) in its
-  T-count *t*, a near-free-fermion circuit pays only a constant factor per
-  interacting gate — it degrades gently rather than falling off a cliff. (You can
-  watch this happen in [`simulator-router/`](simulator-router/): adding one
-  interacting gate to a free-fermion circuit nudges the cost up by a single notch.)
-- **Fermionic tensor networks** put a free-fermion *reference state* underneath a
-  tensor network — exactly what quantum chemistry does when it builds correlations
-  on top of a (Gaussian) Hartree–Fock starting point.
+### The shared principle: pay only for the hard part
 
-There is even an extra axis the table doesn't list: **how far a problem is from
-*planar*.** The free-fermion / FKT method is polynomial on a planar layout; on a
-surface of genus *g* it costs a known factor of 4ᵍ more — so "distance from planar"
-is itself a meter you can pay in, and `holant-tools` implements the genus-*g*
-machinery directly.
+Every member has one "easy axis" and a **meter** for how far a problem strays from
+it: the T-count (non-Clifford gates), the interacting-gate count (non-matchgate
+gates), the entanglement across a cut, and even the *distance from planar* (the
+free-fermion / FKT method is polynomial on a planar layout; a genus-*g* surface
+costs a known factor of 4ᵍ more — machinery `holant-tools` implements directly).
+Combining the family then means one thing: handle the bulk with whichever member is
+cheap, and pay an exponential price *only* in the small leftover "hard" amount its
+meter counts.
 
-All of this points at one practical question: *given a concrete problem, which
-method (or combination) is the cheap one here?* The
-[`simulator-router/`](simulator-router/) example is a first concrete answer — it
-measures how far a circuit sits from each kind of easy structure (non-Clifford
-count, interacting-gate count, entanglement) and names the cheapest simulator,
-flagging the circuits where **no** classical method applies and only a quantum
-computer would do. Think of it as a dispatcher across the whole table rather than a
-champion of any one row.
+### It already works in pieces
+
+Several established hybrids are exactly this move — and several lean on the
+free-fermion kernel this repo is built on:
+
+- **Quantum Monte Carlo runs on the free-fermion kernel.** Auxiliary-field QMC
+  splits an *interacting* system into a sum of *non-interacting* (free-fermion)
+  problems, solves each exactly with a determinant or **Pfaffian** — this repo's
+  engine — and samples over the rest; the "sign problem" is just those weights
+  turning negative.
+- **Free fermion + a few interacting gates** mirrors *Clifford + a few T-gates*:
+  the cost grows by a constant factor per extra gate, not off a cliff. (Watch it in
+  [`simulator-router/`](simulator-router/) — one interacting gate, one notch.)
+- **Fermionic tensor networks** build correlations on top of a free-fermion
+  (Gaussian) reference — exactly quantum chemistry's coupled-cluster on a
+  Hartree–Fock starting point.
+
+### The proposal: measure every axis, then route
+
+If each member has a meter, the way to combine the whole family is to **score a
+problem on every meter at once and route accordingly** — send it to the cheapest
+member, split it across several, or flag the cases where *no* meter is small (the
+genuinely-quantum regime). The [`simulator-router/`](simulator-router/) example is a
+first concrete step: it measures a circuit's distance along each axis (non-Clifford
+count, interacting-gate count, entanglement) and names the cheapest simulator, or
+reports that only a quantum computer would do. Routing to the single best member is
+implemented today; actually *splitting* a problem across members — the full hybrid
+dispatcher — is the natural next step.
 
 ## What's inside
 
