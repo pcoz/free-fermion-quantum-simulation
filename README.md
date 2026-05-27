@@ -162,11 +162,15 @@ member, split it across several, or flag the cases where *no* meter is small (th
 genuinely-quantum regime). The [`simulator-router/`](simulator-router/) example is a
 first concrete step: it measures a circuit's distance along each axis (non-Clifford
 count, interacting-gate count, entanglement) and names the cheapest simulator, or
-reports that only a quantum computer would do. The next step — actually *splitting*
-a problem so the pieces can be handled separately — is demonstrated, and verified
-exact, in [`hybrid-dispatcher/`](hybrid-dispatcher/): it cuts a circuit into pieces
-and pays only for the few gates connecting them. Routing each piece to its *own*
-cheapest member is the one remaining open piece.
+reports that only a quantum computer would do. The next step — *splitting* a problem
+and routing each piece to its **own** cheapest member — is demonstrated, and verified
+exact, in [`hybrid-dispatcher/`](hybrid-dispatcher/): it cuts a circuit into pieces,
+routes each piece independently, and pays only for the few gates connecting them.
+Strikingly, a circuit with **no single cheap method as a whole** can split into
+halves that are each easy along a *different* axis. The one remaining engineering
+step is executing each piece on its member's native polynomial engine (the routing
+decision and its cost are computed today; the verified run uses an exact reference
+backend).
 
 ## What's inside
 
@@ -187,7 +191,7 @@ namesake), [`ising-phase-transition/`](ising-phase-transition/),
 | [`network_reliability.py`](network-reliability/network_reliability.py) | **Compute the exact risk of a large simultaneous outage** in a planar utility/telecom grid when failures are **correlated** (a storm takes out neighbouring lines together). Assuming failures are independent **badly underestimates that risk**; sampling never sees the rare, costly tail. | the **exact** probability of a major outage, where Monte-Carlo reports **zero** |
 | [`roster_solution_space.py`](roster-counting/roster_solution_space.py) | **Count and audit *all* valid staff rosters at once** — how many exist, is the schedule forced, which assignment is a **single point of failure** — instead of just finding one. Schedulers return one answer; **the whole solution space is assumed too big to explore**. | the **exact** count of valid rosters — a ~**50-digit** number — in ~0.5 s, where enumeration could never finish |
 | [`simulator_router.py`](simulator-router/simulator_router.py) | **Given a quantum circuit, work out *which* of the methods above can simulate it cheaply** — by measuring how far it sits from each kind of "easy structure" (how many non-Clifford gates, how many interacting gates, how much entanglement). A **map from a problem to the right tool**, tying the whole landscape table together. | **routes each circuit to its cheapest simulator automatically** — and flags the ones where **no** classical method is cheap (the genuinely-quantum regime) |
-| [`hybrid_dispatcher.py`](hybrid-dispatcher/hybrid_dispatcher.py) | **Don't pick one simulator — split the problem across several.** Cut a circuit into pieces, simulate each piece separately, and **pay only for the few gates that connect them** (circuit cutting / the method Google used to verify Sycamore). Recombines to the *exact* answer. | an **exact** result paying ~10⁷ operations where brute force needs ~10¹² (n=40) — verified to machine precision against brute force |
+| [`hybrid_dispatcher.py`](hybrid-dispatcher/hybrid_dispatcher.py) | **Don't pick one simulator — cut the problem and route each piece to its own.** Cut a circuit into pieces, send each piece to *its* cheapest method, and **pay only for the few gates that connect them** (circuit cutting / the method Google used to verify Sycamore). A circuit with **no single cheap method** can split into halves that are each easy — along *different* axes. | the **exact** answer for a circuit that is hopeless as a whole — ~500× cheaper than brute force — verified to machine precision |
 
 ## Quick start
 

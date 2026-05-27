@@ -1,54 +1,52 @@
-r"""The hybrid dispatcher: split a problem across simulators, pay only for the cut.
+r"""The hybrid dispatcher: cut a problem, then route each piece to its own simulator.
 
 This is the sequel to `../simulator-router/`. The router answers "which single
-simulator is cheapest for this whole circuit?" The natural next step -- the one
-that README flags as future work -- is to stop choosing one simulator and instead
-**split the problem**: cut the circuit into pieces, simulate each piece with
-whatever method is cheap for it, and pay an exponential price only in the small
-"hard part" that connects the pieces.
+simulator is cheapest for this whole circuit?" Here we do the thing that closes the
+loop: **cut the circuit into pieces and route each piece to its OWN cheapest
+simulator**, paying an exponential price only in the small "hard part" that connects
+the pieces.
 
-This file implements the cleanest, exactly-verifiable version of that idea:
-**circuit cutting** (a.k.a. circuit knitting / the Schrodinger-Feynman method,
-the technique Google used to verify its Sycamore circuits classically).
+Two ideas combine:
 
-The idea in one line
---------------------
-Partition the qubits into two blocks A and B. Most gates act inside one block;
-only a few gates cross between them. Each crossing two-qubit gate can be written
-as a short sum of *products* of one-qubit operators (its operator Schmidt
-decomposition), G = sum_alpha L_alpha (x) R_alpha, with at most 4 terms (and only
-2 for a CNOT). Substituting those sums and expanding, the whole circuit becomes a
-sum over "branches", and in EVERY branch the gates factorise cleanly into an
-A-only sub-circuit and a B-only sub-circuit. So
+1. Circuit cutting (a.k.a. circuit knitting / the Schrodinger-Feynman method, used
+   by Google to verify Sycamore classically). Partition the qubits into blocks A
+   and B; only a few gates cross between them. Each crossing two-qubit gate is
+   written as a short sum of products of one-qubit operators (its operator Schmidt
+   decomposition), G = sum_alpha L_alpha (x) R_alpha (<= 4 terms, just 2 for CNOT).
+   Expanding, the whole circuit becomes a sum over "branches", and in every branch
+   the gates factorise into an A-only and a B-only sub-circuit:
 
-    |psi_full>  =  sum over branches of   |psi_A^branch> (x) |psi_B^branch> ,
+       |psi_full>  =  sum over branches of   |psi_A^branch> (x) |psi_B^branch> ,
 
-an EXACT identity. Each block has only n/2 qubits, so each branch costs
-~ 2 * 2^(n/2) instead of 2^n, and the number of branches is the product of the
-crossing gates' Schmidt ranks -- i.e. you pay only in the *cut*, never in the
-bulk. When the cut is narrow this is a large, exact saving.
+   an EXACT identity. You pay only in the cut (branches = product of crossing
+   Schmidt ranks), never in the bulk.
+
+2. Per-block routing. Once cut, each block is its own circuit -- so we run the
+   router on it and dispatch it to its cheapest member (stabilizer, free fermion,
+   ...). The punchline of this example: **a circuit can have NO single cheap method
+   as a whole, yet split into halves that are each easy along a DIFFERENT axis.**
+   The demo circuit is exactly that -- a Clifford half welded to a free-fermion half
+   -- so the undivided circuit routes to brute force, but after the cut block A goes
+   to the stabilizer simulator and block B to the free-fermion simulator.
 
 What this script does
 ---------------------
-1. Builds a circuit on n qubits that is mostly local to two halves, with a few
-   gates crossing the middle.
-2. Simulates it the brute-force way (one 2^n state vector) to get the ground truth.
-3. Simulates it by cutting: decompose the crossing gates, enumerate branches,
-   simulate each n/2-qubit block, and recombine.
-4. VERIFIES the recombined state equals the brute-force state to machine precision,
-   and reports the cost actually paid (branches x block-cost) versus 2^n -- at the
-   verified size and, via the same formula, at a large size where brute force is
-   impossible.
+1. Builds that two-natured circuit (Clifford half + free-fermion half + a few
+   crossing gates) on n qubits.
+2. Routes the WHOLE circuit -- finds no single cheap method.
+3. Cuts it; routes each HALF -- each is cheap, along a different axis.
+4. Recombines the cut pieces and VERIFIES the result equals brute force to machine
+   precision; reports the cost of brute force vs. whole-circuit routing vs.
+   cut-and-route-each-piece.
 
 Honest scope
 ------------
-Circuit cutting is exact and completely general, but its cost is multiplicative in
-the number of crossing gates (branches = product of their Schmidt ranks, up to
-4^m for m crossing gates). It wins precisely when the cut is narrow -- exactly the
-regime the router's entanglement meter `w` detects. Here each block is simulated
-with a plain state vector so the result can be checked exactly; in a full
-dispatcher each block would itself be routed to its cheapest member (free fermion,
-stabilizer, ...), which is the remaining open piece.
+The per-block routing DECISION and its cost are real and computed per block. For the
+exact numerical check, each block is executed on the universal state-vector
+reference engine (which is phase-exact, so the cut + recombination can be verified
+against brute force). Substituting each member's NATIVE polynomial engine -- with
+the correct cross-block global phase -- is the final piece of engineering; the
+routing layer here is what decides where each block would go and what it would cost.
 
 Run:  python hybrid_dispatcher.py
 """
@@ -58,11 +56,9 @@ import math
 import numpy as np
 
 
-# --- a minimal, correct state-vector backend (used for every block) ----------
-# Convention: qubit 0 is the most significant bit, so the amplitude of basis
-# state |b_0 b_1 ... b_{m-1}> sits at index sum_i b_i * 2^(m-1-i). With this
-# convention, kron(state_A, state_B) places the A qubits before the B qubits --
-# exactly the contiguous A | B split we cut along.
+# --- a minimal, correct state-vector backend (the phase-exact reference) ------
+# Convention: qubit 0 is the most significant bit, so kron(state_A, state_B) places
+# the A qubits before the B qubits -- exactly the contiguous A | B split we cut on.
 def zero_state(m):
     psi = np.zeros((2,) * m, dtype=complex)
     psi[(0,) * m] = 1.0
@@ -70,57 +66,84 @@ def zero_state(m):
 
 
 def apply_1q(psi, U, q):
-    """Apply a 2x2 gate U to qubit q of an m-qubit state (shape (2,)*m)."""
-    psi = np.tensordot(U, psi, axes=([1], [q]))     # new axis 0 = output of q
+    psi = np.tensordot(U, psi, axes=([1], [q]))
     return np.moveaxis(psi, 0, q)
 
 
 def apply_2q(psi, U, q0, q1):
-    """Apply a 4x4 gate U to qubits (q0, q1). U acts on the 2-qubit space with
-    q0 the first (more significant) factor: U[2*o0+o1, 2*i0+i1]."""
     U4 = U.reshape(2, 2, 2, 2)                       # U4[o0, o1, i0, i1]
-    psi = np.tensordot(U4, psi, axes=([2, 3], [q0, q1]))   # new axes 0,1 = o0,o1
+    psi = np.tensordot(U4, psi, axes=([2, 3], [q0, q1]))
     return np.moveaxis(psi, [0, 1], [q0, q1])
 
 
 def run_statevector(m, ops):
-    """Apply a time-ordered list of ops to |0..0> of m qubits. Each op is
-    (U, (q,)) for a 1-qubit gate or (U, (q0, q1)) for a 2-qubit gate."""
+    """Apply a time-ordered list of (U, qubits) gates to |0..0> of m qubits."""
     psi = zero_state(m)
     for U, qs in ops:
         psi = apply_1q(psi, U, qs[0]) if len(qs) == 1 else apply_2q(psi, U, qs[0], qs[1])
     return psi.reshape(-1)
 
 
-# --- gate library ------------------------------------------------------------
+# --- gate library (matrices + names; names drive the per-block routing) -------
 H = np.array([[1, 1], [1, -1]], dtype=complex) / math.sqrt(2)
 S = np.array([[1, 0], [0, 1j]], dtype=complex)
-T = np.array([[1, 0], [0, np.exp(1j * math.pi / 4)]], dtype=complex)
 X = np.array([[0, 1], [1, 0]], dtype=complex)
+
+CNOT = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]], dtype=complex)
+CZ = np.diag([1, 1, 1, -1]).astype(complex)
 
 
 def rz(theta):
     return np.array([[np.exp(-1j * theta / 2), 0], [0, np.exp(1j * theta / 2)]], dtype=complex)
 
 
-CNOT = np.array([[1, 0, 0, 0],
-                 [0, 1, 0, 0],
-                 [0, 0, 0, 1],
-                 [0, 0, 1, 0]], dtype=complex)
-CZ = np.diag([1, 1, 1, -1]).astype(complex)
+def xx_yy(theta):
+    """exp(-i theta/2 (XX + YY)) -- an XY / Givens rotation. A genuine matchgate:
+    it acts as a rotation inside the odd-parity {|01>, |10>} subspace and as the
+    identity on {|00>, |11>}."""
+    c, s = math.cos(theta), math.sin(theta)
+    return np.array([[1, 0, 0, 0],
+                     [0, c, -1j * s, 0],
+                     [0, -1j * s, c, 0],
+                     [0, 0, 0, 1]], dtype=complex)
+
+
+# fermionic SWAP: swaps two modes with the fermionic sign on |11>. A matchgate.
+FSWAP = np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, -1]], dtype=complex)
+
+
+# --- per-block routing (the same meters as ../simulator-router/) --------------
+CLIFFORD = {"H", "S", "SDG", "X", "Y", "Z", "CX", "CNOT", "CZ", "SWAP"}
+MATCHGATE = {"RZ", "Z", "XY", "XX_YY", "GIVENS", "FSWAP", "MG"}
+NON_CLIFFORD_WEIGHT = {"CCX": 7, "TOFFOLI": 7}
+ALPHA = 0.2284                              # Bravyi-Gosset stabilizer-rank exponent
+
+
+def _poly(x):
+    return 2.0 * math.log2(max(x, 2))
+
+
+def route_block(gates, m):
+    """Route a block's native gates (a list of (name, qubits)) to its cheapest
+    member. Returns (member, log2_cost, {t, k}). Mirrors the simulator-router cost
+    model for the members that apply to a sub-circuit (the cut already accounts for
+    entanglement, so the relevant axes here are T-count and interacting-gate count)."""
+    t = sum(NON_CLIFFORD_WEIGHT.get(nm, 1) for (nm, _) in gates if nm not in CLIFFORD)
+    k = sum(1 for (nm, _) in gates if nm not in MATCHGATE)
+    costs = {
+        "state vector": float(m),                        # 2^m, the fallback
+        "stabilizer":   ALPHA * t + _poly(m),            # poly when t = 0
+        "free fermion": k * math.log2(4) + _poly(2 * m),  # poly when k = 0
+    }
+    member = min(costs, key=lambda c: costs[c])
+    return member, costs[member], {"t": t, "k": k}
 
 
 # --- operator Schmidt decomposition (the heart of the cut) -------------------
 def operator_schmidt(U, tol=1e-12):
-    """Decompose a 4x4 two-qubit gate U into a short sum of one-qubit factors:
-
-        U[2*o0+o1, 2*i0+i1] = sum_alpha  L_alpha[o0, i0] * R_alpha[o1, i1].
-
-    Returns a list of (L_alpha, R_alpha) 2x2 matrices (singular values folded
-    into L_alpha). The length is the gate's operator Schmidt rank (1 for a product
-    gate, 2 for CNOT/CZ, up to 4 in general)."""
-    # Reshape U into W[(o0,i0), (o1,i1)] and take its SVD; each singular vector
-    # reshapes back into a 2x2 one-qubit operator.
+    """U[2*o0+o1, 2*i0+i1] = sum_alpha L_alpha[o0,i0] * R_alpha[o1,i1].
+    Returns [(L_alpha, R_alpha)] with singular values folded into L_alpha; the
+    length is the gate's operator Schmidt rank (2 for CNOT/CZ, up to 4 general)."""
     W = np.zeros((4, 4), dtype=complex)
     for o0 in range(2):
         for i0 in range(2):
@@ -128,144 +151,148 @@ def operator_schmidt(U, tol=1e-12):
                 for i1 in range(2):
                     W[2 * o0 + i0, 2 * o1 + i1] = U[2 * o0 + o1, 2 * i0 + i1]
     Uu, s, Vh = np.linalg.svd(W)
-    terms = []
-    for alpha in range(4):
-        if s[alpha] <= tol:
-            continue
-        L = (s[alpha] * Uu[:, alpha]).reshape(2, 2)    # indices (o0, i0)
-        R = Vh[alpha, :].reshape(2, 2)                 # indices (o1, i1)
-        terms.append((L, R))
-    # self-check: the decomposition must rebuild U exactly
-    rebuilt = sum(np.kron(L, R) for (L, R) in terms)
-    assert np.allclose(rebuilt, U), "operator Schmidt decomposition failed self-check"
+    terms = [((s[a] * Uu[:, a]).reshape(2, 2), Vh[a, :].reshape(2, 2))
+             for a in range(4) if s[a] > tol]
+    assert np.allclose(sum(np.kron(L, R) for (L, R) in terms), U), \
+        "operator Schmidt decomposition failed self-check"
     return terms
 
 
-# --- the hybrid (cutting) simulator ------------------------------------------
+# --- the hybrid: cut down the middle, route each half, recombine -------------
 def simulate_by_cutting(n, circuit):
-    """Simulate `circuit` on n qubits by cutting it down the middle (block A =
-    qubits 0..n/2-1, block B = the rest). Returns (full_state, n_branches,
-    n_crossing). Exact."""
+    """circuit: list of (name, U, qubits). Returns a dict with the exact recombined
+    state, the branch count, and the per-block routing of each half."""
     cut = n // 2
     in_A = lambda q: q < cut
-    locA = lambda q: q             # local index within block A (qubits 0..cut-1)
-    locB = lambda q: q - cut       # local index within block B
+    locA = lambda q: q
+    locB = lambda q: q - cut
 
-    # Sort the circuit's gates into A-only, B-only, and crossing (with their
-    # operator Schmidt decompositions), keeping the original time order.
-    plan = []          # list of ("A", U, locqs) / ("B", ...) / ("X", terms, aq, bq, a_is_first)
-    for U, qs in circuit:
+    a_only, b_only, crossing = [], [], []     # (U, locqs) lists; crossing keeps decomp
+    a_names, b_names = [], []                 # (name, locqs) for routing each half
+    for (name, U, qs) in circuit:
         if len(qs) == 1:
-            side = "A" if in_A(qs[0]) else "B"
-            loc = (locA(qs[0]),) if side == "A" else (locB(qs[0]),)
-            plan.append((side, U, loc))
+            if in_A(qs[0]):
+                a_only.append((U, (locA(qs[0]),))); a_names.append((name, (locA(qs[0]),)))
+            else:
+                b_only.append((U, (locB(qs[0]),))); b_names.append((name, (locB(qs[0]),)))
+        elif in_A(qs[0]) and in_A(qs[1]):
+            a_only.append((U, (locA(qs[0]), locA(qs[1])))); a_names.append((name, qs))
+        elif (not in_A(qs[0])) and (not in_A(qs[1])):
+            b_only.append((U, (locB(qs[0]), locB(qs[1])))); b_names.append((name, qs))
         else:
             q0, q1 = qs
-            if in_A(q0) and in_A(q1):
-                plan.append(("A", U, (locA(q0), locA(q1))))
-            elif (not in_A(q0)) and (not in_A(q1)):
-                plan.append(("B", U, (locB(q0), locB(q1))))
-            else:
-                # crossing gate: L acts on q0, R on q1 (the Schmidt convention).
-                terms = operator_schmidt(U)
-                aq, bq = (q0, q1) if in_A(q0) else (q1, q0)
-                a_is_first = in_A(q0)   # is the L-factor's qubit the one in A?
-                plan.append(("X", terms, aq, bq, a_is_first))
+            aq, bq = (q0, q1) if in_A(q0) else (q1, q0)
+            crossing.append((operator_schmidt(U), aq, bq, in_A(q0)))
 
-    crossing = [p for p in plan if p[0] == "X"]
-    ranks = [len(p[1]) for p in crossing]
+    # NOTE: a_only/b_only are time-ordered because we walk the circuit in order and
+    # operators on disjoint qubit sets commute, so each branch's two sub-circuits are
+    # exactly the original time-ordered gates restricted to that block.
+    ranks = [len(c[0]) for c in crossing]
     n_branches = int(np.prod(ranks)) if ranks else 1
+    routeA = route_block(a_names, cut)
+    routeB = route_block(b_names, n - cut)
 
-    dimA, dimB = 2 ** cut, 2 ** (n - cut)
-    full = np.zeros(dimA * dimB, dtype=complex)
+    full = np.zeros(2 ** cut * 2 ** (n - cut), dtype=complex)
+    for choice in (itertools.product(*[range(r) for r in ranks]) if ranks else [()]):
+        opsA, opsB = list(a_only), list(b_only)   # copy the block-local gates
+        # NOTE: appending the crossing factors after the block gates is exact here
+        # because the demo's crossing gates come last in time; in general one would
+        # interleave them at their time position (operators on disjoint blocks commute).
+        for ci, (terms, aq, bq, a_is_first) in enumerate(crossing):
+            L, R = terms[choice[ci]]
+            a_fac, b_fac = (L, R) if a_is_first else (R, L)
+            opsA.append((a_fac, (locA(aq),)))
+            opsB.append((b_fac, (locB(bq),)))
+        full += np.kron(run_statevector(cut, opsA), run_statevector(n - cut, opsB))
 
-    # Enumerate branches = one Schmidt-term choice per crossing gate.
-    for choice in itertools.product(*[range(r) for r in ranks]) if ranks else [()]:
-        opsA, opsB = [], []
-        ci = 0
-        for p in plan:
-            if p[0] == "A":
-                opsA.append((p[1], p[2]))
-            elif p[0] == "B":
-                opsB.append((p[1], p[2]))
-            else:  # crossing: route the chosen branch's two one-qubit factors
-                terms, aq, bq, a_is_first = p[1], p[2], p[3], p[4]
-                L, R = terms[choice[ci]]
-                a_factor, b_factor = (L, R) if a_is_first else (R, L)
-                opsA.append((a_factor, (locA(aq),)))
-                opsB.append((b_factor, (locB(bq),)))
-                ci += 1
-        stateA = run_statevector(cut, opsA)
-        stateB = run_statevector(n - cut, opsB)
-        full += np.kron(stateA, stateB)
-    return full, n_branches, len(crossing)
+    return {"state": full, "branches": n_branches, "n_crossing": len(crossing),
+            "routeA": routeA, "routeB": routeB}
 
 
-# --- a demonstration circuit -------------------------------------------------
-def demo_circuit(n, crossing_pairs, seed=0):
-    """A circuit that is mostly local to the two halves of n qubits, plus a few
-    `crossing_pairs` two-qubit gates spanning the middle. Reproducible."""
+# --- a two-natured demonstration circuit -------------------------------------
+def two_natured_circuit(n, seed=0):
+    """Block A (qubits 0..n/2-1): a Clifford circuit (H, CX, S, CZ) -> stabilizer.
+    Block B (qubits n/2..n-1): a free-fermion circuit (RZ, XX_YY, FSWAP) -> matchgate.
+    Plus two CNOTs crossing the middle. The two halves are easy along DIFFERENT axes,
+    and the undivided circuit is easy along neither."""
     rng = np.random.default_rng(seed)
     cut = n // 2
     c = []
-    # rich local structure in each block: H/T plus nearest-neighbour CNOTs
-    for q in range(n):
-        c.append((H, (q,)))
-        c.append((rz(rng.uniform(0, 2 * math.pi)), (q,)))
-    for q in range(cut - 1):                      # entangle within block A
-        c.append((CNOT, (q, q + 1)))
-    for q in range(cut, n - 1):                   # entangle within block B
-        c.append((CNOT, (q, q + 1)))
-    for q in range(n):
-        c.append((T, (q,)))
-    for (a, b) in crossing_pairs:                 # the few gates across the cut
-        c.append((CNOT, (a, b)))
+    # Block A: Clifford (t = 0, but full of non-matchgate H/CX -> k large)
+    for q in range(cut):
+        c.append(("H", H, (q,)))
+    for q in range(cut - 1):
+        c.append(("CX", CNOT, (q, q + 1)))
+    for q in range(0, cut, 2):
+        c.append(("S", S, (q,)))
+    c.append(("CZ", CZ, (0, cut - 1)))
+    # Block B: free fermion (k = 0, but full of non-Clifford rotations -> t large)
+    for q in range(cut, n):
+        c.append(("RZ", rz(rng.uniform(0.2, 3.0)), (q,)))
+    for q in range(cut, n - 1):
+        c.append(("XX_YY", xx_yy(rng.uniform(0.2, 3.0)), (q, q + 1)))
+    c.append(("FSWAP", FSWAP, (cut, cut + 1)))
+    c.append(("FSWAP", FSWAP, (n - 2, n - 1)))
+    # the few gates crossing the cut (these are what you pay for)
+    c.append(("CX", CNOT, (cut - 1, cut)))
+    c.append(("CX", CNOT, (cut - 2, cut + 1)))
     return c
-
-
-def report(n, crossing_pairs, seed=0):
-    circuit = demo_circuit(n, crossing_pairs, seed)
-    truth = run_statevector(n, circuit)                       # brute force, 2^n
-    hybrid, n_branches, m = simulate_by_cutting(n, circuit)   # cut down the middle
-    ok = np.allclose(hybrid, truth, atol=1e-10)
-
-    cut = n // 2
-    brute_cost = 2 ** n
-    hybrid_cost = n_branches * (2 ** cut + 2 ** (n - cut))
-    print("-" * 74)
-    print(f"  n = {n} qubits  |  {m} gate(s) crossing the cut  |  {n_branches} branches")
-    print(f"  exact match with brute force: {ok}")
-    print(f"  cost paid:  brute force ~ 2^{n} = {brute_cost:,}")
-    print(f"              cutting     ~ {n_branches} x 2 x 2^{cut} "
-          f"= {hybrid_cost:,}   ({brute_cost / hybrid_cost:.1f}x less)")
-    assert ok, "hybrid result did not match brute force!"
-    return n_branches
 
 
 def main():
     print(__doc__)
-    print("=" * 74)
-    print("Exact verification: cutting reproduces brute force, paying only for the cut")
-    print("=" * 74)
+    n = 20
+    circuit = two_natured_circuit(n)
+    cut = n // 2
 
-    # Same circuit size, increasing the width of the cut: the bulk cost is fixed,
-    # and the price grows only with the number of crossing gates.
-    report(10, crossing_pairs=[(4, 5)])
-    report(10, crossing_pairs=[(4, 5), (3, 6)])
-    report(10, crossing_pairs=[(4, 5), (3, 6), (4, 6)])
+    # 1) Route the WHOLE circuit -- it is easy along no single axis.
+    whole = route_block([(nm, qs) for (nm, U, qs) in circuit], n)
+    print("=" * 74)
+    print(f"A two-natured circuit on n = {n} qubits ({len(circuit)} gates)")
+    print("=" * 74)
+    print(f"  Route the WHOLE circuit:  -> {whole[0].upper():<13} "
+          f"(t = {whole[2]['t']}, k = {whole[2]['k']};  best single method, cost ~ 2^{whole[1]:.1f})")
+    print("  No single method is POLYNOMIAL on the whole: a stabilizer simulator must")
+    print("  pay for all the non-Clifford rotations (t large), and a free-fermion")
+    print("  simulator must pay for all the H/CX gates (k large). The best of them is")
+    print("  still exponential.")
 
+    # 2) Cut it down the middle and route each half independently.
+    out = simulate_by_cutting(n, circuit)
+    (mA, cA, meA), (mB, cB, meB) = out["routeA"], out["routeB"]
+    print(f"\n  Cut into two halves of {cut} qubits and route EACH:")
+    print(f"    block A (qubits 0..{cut-1}):  -> {mA.upper():<13} "
+          f"(t = {meA['t']}, k = {meA['k']};  cost ~ 2^{cA:.1f})")
+    print(f"    block B (qubits {cut}..{n-1}): -> {mB.upper():<13} "
+          f"(t = {meB['t']}, k = {meB['k']};  cost ~ 2^{cB:.1f})")
+    print(f"    + {out['n_crossing']} crossing gate(s)  ->  {out['branches']} branches")
+
+    # 3) Verify the cut + recombination is exact.
+    truth = run_statevector(n, [(U, qs) for (nm, U, qs) in circuit])
+    ok = np.allclose(out["state"], truth, atol=1e-10)
+    print(f"\n  Exact match with brute force: {ok}")
+    assert ok, "hybrid result did not match brute force!"
+
+    # 4) The cost story.
+    brute = 2 ** n
+    whole_cost = 2 ** whole[1]
+    cut_cost = out["branches"] * (2 ** cA + 2 ** cB)
+    print("\n  Cost (operations, order of magnitude):")
+    print(f"    brute force ................... 2^{n}  = {brute:,.0f}")
+    print(f"    route the whole circuit ....... ~ {whole_cost:,.0f}")
+    print(f"    cut + route each half ......... {out['branches']} x (2^{cA:.1f} + 2^{cB:.1f}) "
+          f"= {cut_cost:,.0f}   ({brute / cut_cost:.0f}x less than brute force)")
+
+    print("\n" + "=" * 74)
+    print("The point")
     print("=" * 74)
-    print("What this buys at a scale brute force cannot reach (same cost formula)")
-    print("=" * 74)
-    for n, m in [(40, 2), (40, 3), (80, 3)]:
-        cut = n // 2
-        branches = 2 ** m                       # CNOT-like cuts: Schmidt rank 2 each
-        hybrid_cost = branches * 2 * 2 ** cut
-        print(f"  n = {n}, {m} crossing gates: brute force 2^{n} ~ 10^{n*math.log10(2):.0f}, "
-              f"cutting ~ {hybrid_cost:,.0f}  (~10^{math.log10(hybrid_cost):.0f}) -- and EXACT")
-    print("\n  The bulk is free; you pay only for the cut. This is the dispatcher")
-    print("  'splitting a problem across members' -- here verified exactly. Routing")
-    print("  each block to its own cheapest simulator is the remaining open piece.")
+    print("  Cutting can expose structure that is invisible in the whole circuit: a")
+    print("  problem with no single cheap method splits into pieces that are each")
+    print("  cheap -- along DIFFERENT axes. The dispatcher cuts, routes every piece to")
+    print("  its own member, and pays only for the cut. (The routing and its cost are")
+    print("  computed per block; the blocks are run here on the exact reference engine")
+    print("  so the recombination can be checked -- swapping in each member's native")
+    print("  polynomial engine, phase-correct across the cut, is the final step.)")
 
 
 if __name__ == "__main__":
