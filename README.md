@@ -68,47 +68,6 @@ plainly where the structure runs out and what to reach for instead (a general
 solver, a quantum computer, a sampling method). The skill is recognising the
 structured slice — inside it, "intractable" becomes "milliseconds."
 
-## What's inside
-
-Seven worked examples, in four folders — [`free-fermion/`](free-fermion/) (the
-namesake), [`ising-phase-transition/`](ising-phase-transition/),
-[`network-reliability/`](network-reliability/), and
-[`roster-counting/`](roster-counting/):
-
-| example | what it shows (and why it matters) | the "impossible" done on silicon |
-|---|---|---|
-| [`ff_analog_twin.py`](free-fermion/ff_analog_twin.py) | **Simulate a quantum system** (a chain of magnetic spins) on an ordinary computer. Quantum systems are famously hard to simulate because the bookkeeping **doubles with every particle added** — this special **free-fermion** family sidesteps that. | a **2048-qubit** simulation in seconds — a state vector would need more numbers than there are atoms in the universe |
-| [`entanglement_entropy.py`](free-fermion/entanglement_entropy.py) | **Measure how entangled a quantum system is.** Entanglement is the **resource behind quantum computing** and the fingerprint of exotic phases of matter — and it normally needs the **full exponential state** to compute. | the entropy of a **512-qubit** chain in ~1 s, where brute force needs ~10¹⁵⁴ numbers |
-| [`lieb_robinson_lightcone.py`](free-fermion/lieb_robinson_lightcone.py) | **Watch how fast information spreads** through a quantum material. There's an emergent **"speed of light"** (the Lieb–Robinson bound) that caps how quickly a disturbance can travel — it **limits how fast quantum computers and quantum communication can ever be**. | exact to **256 qubits**, resolving signals **~10 orders of magnitude below** any sampling floor |
-| [`quantum_device_benchmark.py`](free-fermion/quantum_device_benchmark.py) | **Check whether a real quantum computer actually did what it claimed**, by comparing its output to an exact answer computed classically. Validating quantum hardware needs a **trusted reference** — which normally **doesn't exist at large sizes**. | certifying a **128-qubit** processor against a zero-error reference — no 2¹²⁸ state vector exists |
-| [`ising_phase_transition.py`](ising-phase-transition/ising_phase_transition.py) | **Compute exactly when a magnet abruptly loses its magnetism** as it's heated — a **phase transition**, like water boiling. The 2D Ising model is the textbook case, and it's exactly solvable *because it is secretly a **free-fermion system***. | the exact **critical temperature** and critical exponent (1/8), which simulation can only estimate with error bars |
-| [`network_reliability.py`](network-reliability/network_reliability.py) | **Compute the exact risk of a large simultaneous outage** in a planar utility/telecom grid when failures are **correlated** (a storm takes out neighbouring lines together). Assuming failures are independent **badly underestimates that risk**; sampling never sees the rare, costly tail. | the **exact** probability of a major outage, where Monte-Carlo reports **zero** |
-| [`roster_solution_space.py`](roster-counting/roster_solution_space.py) | **Count and audit *all* valid staff rosters at once** — how many exist, is the schedule forced, which assignment is a **single point of failure** — instead of just finding one. Schedulers return one answer; **the whole solution space is assumed too big to explore**. | the **exact** count of valid rosters — a ~**50-digit** number — in ~0.5 s, where enumeration could never finish |
-
-## Quick start
-
-```bash
-pip install holant-tools numpy sympy   # the only dependencies
-
-cd free-fermion                  # quantum simulation (the free-fermion examples)
-python ff_analog_twin.py
-python entanglement_entropy.py
-python lieb_robinson_lightcone.py
-python quantum_device_benchmark.py
-
-cd ../ising-phase-transition     # the 2D Ising phase transition
-python ising_phase_transition.py
-
-cd ../network-reliability        # exact correlated-outage risk
-python network_reliability.py
-
-cd ../roster-counting            # count + certify a roster's whole solution space
-python roster_solution_space.py
-```
-
-Each subfolder has its own README explaining the maths in plain terms, the
-honest scope, and a short glossary.
-
 ## Where this repository sits among other quantum simulation systems
 
 Simulating a quantum system on an ordinary (classical) computer is hard for one
@@ -157,6 +116,91 @@ highly entangled, magic-rich, interacting, and sign-problematic offers no
 structure for any classical method to exploit — and that is exactly the regime a
 quantum computer is for. This repo takes one of those axes, the free-fermion one,
 to its exact, large-scale conclusion, and shows where it ends.
+
+## How these methods combine
+
+The five rows above are not five islands. Because each method only has to pay for
+the *part* of a problem that breaks its assumption, the methods can be **wired
+together** — handle the bulk with a cheap structured method, and pay an exponential
+price only in the small amount of "hard" stuff left over. Several of these hybrids
+are workhorses of real research:
+
+- **Quantum Monte Carlo already has the free-fermion method as its inner kernel.**
+  Auxiliary-field QMC takes an *interacting* system, mathematically splits the
+  interaction into a sum over many *non-interacting* (free-fermion) problems, solves
+  each one exactly with a determinant or **Pfaffian** — the very computation this
+  repo's engine performs — and samples over the rest. The notorious "sign problem"
+  is precisely the case where those free-fermion weights turn negative.
+- **Free fermion + a few interacting gates** is the exact mirror of *Clifford + a
+  few T-gates*. Just as a near-Clifford circuit costs roughly 2^(0.23·*t*) in its
+  T-count *t*, a near-free-fermion circuit pays only a constant factor per
+  interacting gate — it degrades gently rather than falling off a cliff. (You can
+  watch this happen in [`simulator-router/`](simulator-router/): adding one
+  interacting gate to a free-fermion circuit nudges the cost up by a single notch.)
+- **Fermionic tensor networks** put a free-fermion *reference state* underneath a
+  tensor network — exactly what quantum chemistry does when it builds correlations
+  on top of a (Gaussian) Hartree–Fock starting point.
+
+There is even an extra axis the table doesn't list: **how far a problem is from
+*planar*.** The free-fermion / FKT method is polynomial on a planar layout; on a
+surface of genus *g* it costs a known factor of 4ᵍ more — so "distance from planar"
+is itself a meter you can pay in, and `holant-tools` implements the genus-*g*
+machinery directly.
+
+All of this points at one practical question: *given a concrete problem, which
+method (or combination) is the cheap one here?* The
+[`simulator-router/`](simulator-router/) example is a first concrete answer — it
+measures how far a circuit sits from each kind of easy structure (non-Clifford
+count, interacting-gate count, entanglement) and names the cheapest simulator,
+flagging the circuits where **no** classical method applies and only a quantum
+computer would do. Think of it as a dispatcher across the whole table rather than a
+champion of any one row.
+
+## What's inside
+
+Eight worked examples, in five folders — [`free-fermion/`](free-fermion/) (the
+namesake), [`ising-phase-transition/`](ising-phase-transition/),
+[`network-reliability/`](network-reliability/),
+[`roster-counting/`](roster-counting/), and
+[`simulator-router/`](simulator-router/):
+
+| example | what it shows (and why it matters) | the "impossible" done on silicon |
+|---|---|---|
+| [`ff_analog_twin.py`](free-fermion/ff_analog_twin.py) | **Simulate a quantum system** (a chain of magnetic spins) on an ordinary computer. Quantum systems are famously hard to simulate because the bookkeeping **doubles with every particle added** — this special **free-fermion** family sidesteps that. | a **2048-qubit** simulation in seconds — a state vector would need more numbers than there are atoms in the universe |
+| [`entanglement_entropy.py`](free-fermion/entanglement_entropy.py) | **Measure how entangled a quantum system is.** Entanglement is the **resource behind quantum computing** and the fingerprint of exotic phases of matter — and it normally needs the **full exponential state** to compute. | the entropy of a **512-qubit** chain in ~1 s, where brute force needs ~10¹⁵⁴ numbers |
+| [`lieb_robinson_lightcone.py`](free-fermion/lieb_robinson_lightcone.py) | **Watch how fast information spreads** through a quantum material. There's an emergent **"speed of light"** (the Lieb–Robinson bound) that caps how quickly a disturbance can travel — it **limits how fast quantum computers and quantum communication can ever be**. | exact to **256 qubits**, resolving signals **~10 orders of magnitude below** any sampling floor |
+| [`quantum_device_benchmark.py`](free-fermion/quantum_device_benchmark.py) | **Check whether a real quantum computer actually did what it claimed**, by comparing its output to an exact answer computed classically. Validating quantum hardware needs a **trusted reference** — which normally **doesn't exist at large sizes**. | certifying a **128-qubit** processor against a zero-error reference — no 2¹²⁸ state vector exists |
+| [`ising_phase_transition.py`](ising-phase-transition/ising_phase_transition.py) | **Compute exactly when a magnet abruptly loses its magnetism** as it's heated — a **phase transition**, like water boiling. The 2D Ising model is the textbook case, and it's exactly solvable *because it is secretly a **free-fermion system***. | the exact **critical temperature** and critical exponent (1/8), which simulation can only estimate with error bars |
+| [`network_reliability.py`](network-reliability/network_reliability.py) | **Compute the exact risk of a large simultaneous outage** in a planar utility/telecom grid when failures are **correlated** (a storm takes out neighbouring lines together). Assuming failures are independent **badly underestimates that risk**; sampling never sees the rare, costly tail. | the **exact** probability of a major outage, where Monte-Carlo reports **zero** |
+| [`roster_solution_space.py`](roster-counting/roster_solution_space.py) | **Count and audit *all* valid staff rosters at once** — how many exist, is the schedule forced, which assignment is a **single point of failure** — instead of just finding one. Schedulers return one answer; **the whole solution space is assumed too big to explore**. | the **exact** count of valid rosters — a ~**50-digit** number — in ~0.5 s, where enumeration could never finish |
+| [`simulator_router.py`](simulator-router/simulator_router.py) | **Given a quantum circuit, work out *which* of the methods above can simulate it cheaply** — by measuring how far it sits from each kind of "easy structure" (how many non-Clifford gates, how many interacting gates, how much entanglement). A **map from a problem to the right tool**, tying the whole landscape table together. | **routes each circuit to its cheapest simulator automatically** — and flags the ones where **no** classical method is cheap (the genuinely-quantum regime) |
+
+## Quick start
+
+```bash
+pip install holant-tools numpy sympy   # the only dependencies
+
+cd free-fermion                  # quantum simulation (the free-fermion examples)
+python ff_analog_twin.py
+python entanglement_entropy.py
+python lieb_robinson_lightcone.py
+python quantum_device_benchmark.py
+
+cd ../ising-phase-transition     # the 2D Ising phase transition
+python ising_phase_transition.py
+
+cd ../network-reliability        # exact correlated-outage risk
+python network_reliability.py
+
+cd ../roster-counting            # count + certify a roster's whole solution space
+python roster_solution_space.py
+
+cd ../simulator-router           # pick the cheapest simulator for a given circuit
+python simulator_router.py
+```
+
+Each subfolder has its own README explaining the maths in plain terms, the
+honest scope, and a short glossary.
 
 ## Built on holant-tools
 
