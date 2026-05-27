@@ -80,6 +80,41 @@ python roster_solution_space.py
 Each subfolder has its own README explaining the maths in plain terms, the
 honest scope, and a short glossary.
 
+## Where this fits among ways of simulating quantum systems
+
+Classically simulating a quantum system isn't one method but a toolbox, and each
+tool works by exploiting a *different* kind of structure. Knowing which tool fits
+which problem is the whole game:
+
+| method | structure it exploits | exact? | where it wins / where it stops |
+|---|---|---|---|
+| **State vector** (brute force) | none — stores all 2ⁿ amplitudes | exact | any system, but only to ~30–50 qubits (memory is 2ⁿ) |
+| **Tensor networks** (MPS / DMRG / PEPS) | *low entanglement* (area law) | approximate (truncation) | excellent for ground states and short-time dynamics of weakly-entangled systems; degrades as entanglement grows (long-time quenches, volume-law states) |
+| **Stabilizer / Clifford+T** | *low "magic"* (few non-Clifford gates) | exact for Clifford; cost grows with the number of T-gates | error-correction-style and near-Clifford circuits |
+| **Quantum Monte Carlo** | *sign-free* (positive path-integral weights) | stochastic (statistical error bars) | many bosonic / unfrustrated spin systems; the "sign problem" defeats frustrated and fermionic ones |
+| **Free fermion / matchgate** *(this repo)* | *non-interacting* (Gaussian / quadratic) | **exact** | matchgate circuits and free-fermion Hamiltonians, to **thousands** of qubits — *at any entanglement* — but breaks the moment an interacting gate is added |
+
+**Where this repo sits — the exact, non-interacting corner.** Two things make it
+distinctive among the above:
+
+- **It is exact** — no truncation, no sampling error, no variational gap. That is
+  exactly what the examples here lean on (counting *all* solutions, resolving
+  signals below the noise floor, certifying hardware against a zero-error
+  reference) — workflows the approximate or stochastic methods cannot support.
+- **It is indifferent to entanglement.** A free-fermion state can be *highly*
+  entangled and still fit in the same small covariance matrix — precisely the
+  regime where tensor networks blow up. The method doesn't care how entangled the
+  state is, only that the dynamics is non-interacting.
+
+**The unifying picture.** Each method has one "easy axis": low entanglement
+(tensor networks), low magic (stabilizer), sign-free (QMC), non-interacting (free
+fermions, here). They are complementary — a real study may use several. **Genuine
+quantum advantage lives where *no* axis applies:** a circuit that is at once
+highly entangled, magic-rich, interacting, and sign-problematic offers no
+structure for any classical method to exploit — and that is exactly the regime a
+quantum computer is for. This repo takes one of those axes, the free-fermion one,
+to its exact, large-scale conclusion, and says honestly where it ends.
+
 ## Built on holant-tools
 
 The engine is [`holant-tools`](https://github.com/pcoz/holant-tools) — a Python
