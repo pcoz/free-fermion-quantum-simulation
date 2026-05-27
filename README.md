@@ -1,14 +1,59 @@
 # Free Fermion Quantum Simulation
 
-**Worked examples and practical applications of classical "structure-exploiting"
-computation** — built on the [`holant-tools`](https://github.com/pcoz/holant-tools)
-library. Each example takes a problem that *looks* impossible or intractable and
-shows it collapsing to something a laptop does in milliseconds — *because the
-problem has structure a matched algorithm can exploit* — and is honest about
-where that stops working.
+Runnable, self-contained examples showing that **some computations that look
+hopelessly expensive are actually exact and fast — when the problem has the right
+hidden structure.** Plain Python (`numpy`, `sympy`, and
+[`holant-tools`](https://github.com/pcoz/holant-tools), which supplies the core
+algorithms) — no quantum hardware, no GPU, no cluster.
 
-Everything here is plain Python (`numpy`, `sympy`, `holant-tools`). No quantum
-hardware, no GPU, no cluster.
+### The idea
+
+Many important calculations *look* intractable because the obvious way to do them
+blows up exponentially: simulating a quantum system of *n* particles seems to need
+**2ⁿ** numbers; counting how many valid schedules exist seems to need checking them
+one at a time; getting an exact probability over a huge space of possibilities
+seems to need summing over all of them. For *n* in the dozens, "exponential"
+already means *more operations than there are atoms in the universe* — so people
+give up and **estimate** (sampling, Monte-Carlo), **approximate**, or just **find
+one answer** instead of the whole picture.
+
+But a subset of these problems have a **regular structure** in how their parts
+connect — and when they do, an algorithm *matched to that structure* returns the
+**exact** answer in **polynomial** time. The exponential cost never appears. Each
+folder here is a concrete, runnable instance: a problem that looks impossible, made
+exact and quick on an ordinary laptop, at sizes brute force could never reach.
+(For example: a *non-interacting* quantum system needs only an *n × n* table
+instead of 2ⁿ amplitudes; counting valid configurations on a *planar* layout is a
+single matrix computation instead of an enumeration.)
+
+### Why this unlocks things you normally can't do
+
+The win is not just speed — it's that the answers are **exact** (not sampled,
+estimated, or truncated) at **large scale**, which enables workflows that are
+otherwise out of reach:
+
+- **Ask "exactly how many?"** — count *all* valid configurations of a system (e.g.
+  every valid staff roster), not just find one, and certify uniqueness and
+  robustness.
+- **Resolve tiny signals** — exact correlations expose effects ~10 orders of
+  magnitude below the noise floor of any sampling method, revealing structure that
+  estimates simply cannot see.
+- **Get a certified ground truth** — validate a real quantum processor against an
+  *exact* classical reference at hundreds of qubits, impossible when your only
+  reference is itself an approximation.
+- **Compute exact probabilities / risk** where the standard approach can only
+  sample and quote error bars.
+
+In every case, *exactness is the enabler*: an approximate answer carries error you
+cannot separate from the quantity you are trying to measure or certify.
+
+### The honest boundary
+
+This is **not** a general speedup for all computation. The trick works *only* when
+the structure is present, and most problems don't have it. Every example states
+plainly where the structure runs out and what to reach for instead (a general
+solver, a quantum computer, a sampling method). The skill is recognising the
+structured slice — inside it, "intractable" becomes "milliseconds."
 
 ## What's inside
 
@@ -34,21 +79,6 @@ python roster_solution_space.py
 
 Each subfolder has its own README explaining the maths in plain terms, the
 honest scope, and a short glossary.
-
-## The one idea behind all of it
-
-> Find the structure, and the "impossible" collapses to polynomial.
-
-- A **free-fermion** quantum system is *non-interacting*, so its whole state fits
-  in a small covariance matrix instead of 2ⁿ amplitudes — exponential → quadratic.
-- A **planar** roster's valid-assignment count is a single Pfaffian (the FKT
-  theorem) instead of an enumeration — #P-hard-looking → polynomial.
-
-Both are instances of the same move, and both come with the same honest caveat:
-**the speed is a property of the structure, not magic.** Remove the structure
-(an interacting quantum gate; dense, capacity-bearing rostering) and you're back
-to genuinely hard, where you reach for the right specialised tool instead. Each
-example says exactly where that line is.
 
 ## Built on holant-tools
 
