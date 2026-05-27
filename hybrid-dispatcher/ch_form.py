@@ -94,6 +94,11 @@ def _rref_basis(vecs, n):
 
 
 class CHForm:
+    """A stabilizer state held in the affine-quadratic (CH) form described at the top
+    of this file: the support directions G (n x k), the offset b, the linear and
+    quadratic phases (lin mod 4, quad strictly-upper mod 2), the free-bit count k, and
+    the exact global phase omega. Gate methods update these in place."""
+
     def __init__(self, n):
         self.n = n
         self.k = 0
@@ -324,8 +329,11 @@ def _random_2q(rng, n):
 
 
 def self_test():
+    """Check every gate against a brute-force state-vector backend, exactly (global
+    phase included), on random circuits of three increasing kinds."""
     rng = np.random.default_rng(0)
-    # Piece 1: X, Z, S, H on a fresh qubit (<=1 H per qubit, no entangling).
+    # (a) single-qubit gates only: X, Z, S, and a fresh Hadamard (<=1 H per qubit,
+    #     no entangling) -- so every H lands on a not-yet-superposed qubit.
     for _ in range(500):
         n = int(rng.integers(1, 6))
         ops, hit = [], set()
@@ -338,10 +346,11 @@ def self_test():
                 q = int(rng.integers(n))
             ops.append((name, q))
         assert np.allclose(_run_chform(n, ops), _reference(n, ops), atol=1e-12), ops
-    print("  [piece 1 OK: X, Z, S, H(fresh) phase-exact on 500 random circuits]")
+    print("  [OK: X, Z, S, H(fresh) phase-exact on 500 random circuits]")
 
-    # Piece 2: a layer of H (case 1) THEN X/Z/S/CX/CZ -- exercises CZ/CX on
-    # entangled, superposed states while keeping every H in the easy case.
+    # (b) entangling gates on superposed states: a layer of Hadamards (each still on a
+    #     fresh qubit) THEN X/Z/S/CX/CZ -- exercises CX, CZ on entangled, superposed
+    #     states while every H stays in the easy case.
     for _ in range(500):
         n = int(rng.integers(2, 6))
         ops = [("H", q) for q in range(n) if rng.random() < 0.6]
@@ -349,10 +358,10 @@ def self_test():
             name = str(rng.choice(["X", "Z", "S", "CX", "CZ"]))
             ops.append((name, _random_2q(rng, n) if name in _MAT2 else int(rng.integers(n))))
         assert np.allclose(_run_chform(n, ops), _reference(n, ops), atol=1e-12), ops
-    print("  [piece 2 OK: + CX, CZ on entangled states, phase-exact on 500 circuits]")
+    print("  [OK: + CX, CZ on entangled states, phase-exact on 500 circuits]")
 
-    # Piece 3: FULLY GENERAL random Clifford circuits -- H anywhere, including on
-    # already-entangled qubits (the case-2 Hadamard, handled by amplitude re-fit).
+    # (c) fully general circuits: any gate in any order, so H frequently lands on an
+    #     already-entangled qubit -- the general case, handled by the amplitude re-fit.
     for _ in range(500):
         n = int(rng.integers(2, 6))
         ops = []
@@ -360,7 +369,7 @@ def self_test():
             name = str(rng.choice(["H", "S", "X", "Z", "CX", "CZ"]))
             ops.append((name, _random_2q(rng, n) if name in _MAT2 else int(rng.integers(n))))
         assert np.allclose(_run_chform(n, ops), _reference(n, ops), atol=1e-12), ops
-    print("  [piece 3 OK: fully general Clifford (H anywhere) phase-exact on 500 circuits]")
+    print("  [OK: fully general Clifford (H anywhere) phase-exact on 500 circuits]")
 
     # The dispatcher's block A shape: a few Hadamards FIRST, then a CX chain, S, CZ.
     # This is exactly the supported fragment; show it is exact and that the carried

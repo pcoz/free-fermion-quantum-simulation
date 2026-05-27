@@ -37,7 +37,8 @@ carry its correct GLOBAL phase, or the branches interfere wrongly.
 
 * Stabilizer (block A): the explicit stabilizer-superposition representation -- the
   state as its sparse amplitudes over the affine support. Phase-exact; compresses to
-  2^(support) (block A spreads over 2^3, not 2^10).
+  2^(support) (block A spreads over 2^3, not 2^10). For the poly-time-ALWAYS variant
+  (O(n*k) regardless of Hadamard count) see the companion module `ch_form.py`.
 * Free fermion (block B): the FERMIONIC GAUSSIAN representation -- the m x m pairing
   matrix A with |psi> proportional to exp(1/2 sum A_ij a_i^dag a_j^dag)|0> (Thouless
   form). Matchgates update A in closed form (number-conserving gates by congruence
