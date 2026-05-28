@@ -1,243 +1,91 @@
 # Free Fermion Quantum Simulation
 
-Runnable, self-contained examples showing that **some computations that look
-hopelessly expensive are actually exact and fast — when the problem has the right
-hidden structure.** Plain Python (`numpy`, `sympy`, and
-[`holant-tools`](https://github.com/pcoz/holant-tools), which supplies the core
-algorithms) — no quantum hardware, no GPU, no cluster.
+**Exact, polynomial-time answers to questions sampling-based tools cannot
+answer at all** — when the problem has the right hidden structure. Plain
+Python (`numpy`, `sympy`, [`holant-tools`](https://github.com/pcoz/holant-tools)).
+No quantum hardware, no GPU, no cluster.
 
----
+```python
+from pipeline_router.easy import StructuralComputer
 
-### The idea: hidden structure makes hard problems exact
+sc = StructuralComputer()
+config_a = [(0, 1), (1, 2), (2, 3), (3, 0)]      # a 4-cycle network
+config_b = [(0,1),(0,2),(0,3),(1,2),(1,3),(2,3)]  # a fully-connected K_4
 
-Many important calculations *look* intractable because the obvious way to do them
-blows up exponentially:
-
-- simulating a quantum system of *n* particles seems to need **2ⁿ** numbers;
-- counting how many valid schedules exist seems to need checking them one at a time;
-- getting an exact probability over a huge space of possibilities seems to need
-  summing over all of them.
-
-For *n* in the dozens, "exponential" already means *more operations than there are
-atoms in the universe* — so people give up and **estimate** (sampling,
-Monte-Carlo), **approximate**, or just **find one answer** instead of the whole
-picture.
-
-But a subset of these problems have a **regular structure** in how their parts
-connect — and when they do, an algorithm *matched to that structure* returns the
-**exact** answer in **polynomial** time. (For example: a *non-interacting* quantum
-system needs only an *n × n* table instead of 2ⁿ amplitudes; counting valid
-configurations on a *planar* layout is a single matrix computation instead of an
-enumeration.)
-
-This repository contains worked examples that show this in action: each takes a
-problem that looks impossible, exploits its structure, and produces an **exact**
-answer on an ordinary laptop in milliseconds to seconds — at sizes brute force
-could never reach.
-
----
-
-### Unlocking things you can't do with standard algorithmic approaches
-
-The win is not just speed — it's that the answers are **exact** (not sampled,
-estimated, or truncated) at **large scale**, which enables workflows that are
-otherwise out of reach:
-
-- **Ask "exactly how many?"** — count *all* valid configurations of a system (e.g.
-  every valid staff roster), not just find one, and certify uniqueness and
-  robustness.
-- **Resolve tiny signals** — exact correlations expose effects ~10 orders of
-  magnitude below the noise floor of any sampling method, revealing structure that
-  estimates simply cannot see.
-- **Get a certified ground truth** — validate a real quantum processor against an
-  *exact* classical reference at hundreds of qubits, impossible when your only
-  reference is itself an approximation.
-- **Compute exact probabilities / risk** where the standard approach can only
-  sample and quote error bars.
-
-In every case, *exactness is the enabler*: an approximate answer carries error you
-cannot separate from the quantity you are trying to measure or certify.
-
----
-
-### Limitations
-
-This is **not** a general speedup for all computation. The trick works *only* when
-the structure is present, and most problems don't have it. Every example states
-plainly where the structure runs out and what to reach for instead (a general
-solver, a quantum computer, a sampling method). The skill is recognising the
-structured slice — inside it, "intractable" becomes "milliseconds."
-
-## Where this repository sits among other quantum simulation systems
-
-Simulating a quantum system on an ordinary (classical) computer is hard for one
-basic reason: a system of *n* quantum particles is described by **2ⁿ** numbers, so
-the memory needed doubles with every particle you add. By a few dozen particles
-that already exceeds the number of atoms in the universe, and storing the state
-outright — the "state vector" approach — becomes impossible. This is the wall that
-motivated building quantum computers in the first place.
-
-But that wall is not uniform. Over the decades, physicists have found that *many*
-quantum systems of practical interest carry some special **structure** — and that
-structure can be exploited to simulate them on a classical computer after all,
-without ever writing down all 2ⁿ numbers. The catch is that there is **no single
-method**: each known technique exploits a *different* kind of structure, works
-brilliantly when that structure is present, and fails when it isn't.
-
-Classical quantum simulation is therefore best understood not as one algorithm but
-as **the family of quantum simulators** — a toolbox whose members each exploit a
-different structure — and choosing the member whose assumption matches your problem
-is what determines whether the simulation is feasible at all:
-
-| method | structure it exploits | exact? | where it wins / where it stops |
-|---|---|---|---|
-| **State vector** (brute force) | none — stores all 2ⁿ amplitudes | exact | any system, but only to ~30–50 qubits (memory is 2ⁿ) |
-| **Tensor networks** (MPS / DMRG / PEPS) | *low entanglement* (area law) | approximate (truncation) | excellent for ground states and short-time dynamics of weakly-entangled systems; degrades as entanglement grows (long-time quenches, volume-law states) |
-| **Stabilizer / Clifford+T** | *low "magic"* (few non-Clifford gates) | exact for Clifford; cost grows with the number of T-gates | error-correction-style and near-Clifford circuits |
-| **Quantum Monte Carlo** | *sign-free* (positive path-integral weights) | stochastic (statistical error bars) | many bosonic / unfrustrated spin systems; the "sign problem" defeats frustrated and fermionic ones |
-| **Free fermion / matchgate** *(this repo)* | *non-interacting* (Gaussian / quadratic) | **exact** | matchgate circuits and free-fermion Hamiltonians, to **thousands** of qubits — *at any entanglement* — but breaks the moment an interacting gate is added |
-
-**Where this repo sits — the exact, non-interacting corner.** Two things make it
-distinctive among the above:
-
-- **It is exact** — no truncation, no sampling error, no variational gap. That is
-  exactly what the examples here lean on (counting *all* solutions, resolving
-  signals below the noise floor, certifying hardware against a zero-error
-  reference) — workflows the approximate or stochastic methods cannot support.
-- **It is indifferent to entanglement.** A free-fermion state can be *highly*
-  entangled and still fit in the same small covariance matrix — precisely the
-  regime where tensor networks blow up. The method doesn't care how entangled the
-  state is, only that the dynamics is non-interacting.
-
-**The unifying picture.** Each method has one "easy axis": low entanglement
-(tensor networks), low magic (stabilizer), sign-free (QMC), non-interacting (free
-fermions, here). They are complementary — a real study may use several. **Genuine
-quantum advantage lives where *no* axis applies:** a circuit that is at once
-highly entangled, magic-rich, interacting, and sign-problematic offers no
-structure for any classical method to exploit — and that is exactly the regime a
-quantum computer is for. This repo takes one of those axes, the free-fermion one,
-to its exact, large-scale conclusion, and shows where it ends.
-
-## Combining the family: one dispatcher across the methods
-
-The members of this family need not compete — they can be **combined**. Each method
-only pays for the *part* of a problem that breaks its assumption, so the right move
-is often not to pick one simulator but to hand each piece of a problem to whichever
-member handles it cheaply. The precedents below show this already works in pieces;
-the proposal at the end is a way to do it automatically.
-
-### The shared principle: pay only for the hard part
-
-Every member has one "easy axis" and a **meter** for how far a problem strays from
-it: the T-count (non-Clifford gates), the interacting-gate count (non-matchgate
-gates), the entanglement across a cut, and even the *distance from planar* (the
-free-fermion / FKT method is polynomial on a planar layout; a genus-*g* surface
-costs a known factor of 4ᵍ more — machinery `holant-tools` implements directly).
-Combining the family then means one thing: handle the bulk with whichever member is
-cheap, and pay an exponential price *only* in the small leftover "hard" amount its
-meter counts.
-
-### It already works in pieces
-
-Several established hybrids are exactly this move — and several lean on the
-free-fermion kernel this repo is built on:
-
-- **Quantum Monte Carlo runs on the free-fermion kernel.** Auxiliary-field QMC
-  splits an *interacting* system into a sum of *non-interacting* (free-fermion)
-  problems, solves each exactly with a determinant or **Pfaffian** — this repo's
-  engine — and samples over the rest; the "sign problem" is just those weights
-  turning negative.
-- **Free fermion + a few interacting gates** mirrors *Clifford + a few T-gates*:
-  the cost grows by a constant factor per extra gate, not off a cliff. (Watch it in
-  [`simulator-router/`](simulator-router/) — one interacting gate, one notch.)
-- **Fermionic tensor networks** build correlations on top of a free-fermion
-  (Gaussian) reference — exactly quantum chemistry's coupled-cluster on a
-  Hartree–Fock starting point.
-
-### The proposal: measure every axis, then route
-
-If each member has a meter, the way to combine the whole family is to **score a
-problem on every meter at once and route accordingly** — send it to the cheapest
-member, split it across several, or flag the cases where *no* meter is small (the
-genuinely-quantum regime). The [`simulator-router/`](simulator-router/) example is a
-first concrete step: it measures a circuit's distance along each axis (non-Clifford
-count, interacting-gate count, entanglement) and names the cheapest simulator, or
-reports that only a quantum computer would do. The next step — *splitting* a problem
-and routing each piece to its **own** cheapest member — is demonstrated, and verified
-exact, in [`hybrid-dispatcher/`](hybrid-dispatcher/): it cuts a circuit into pieces,
-routes each piece independently, and pays only for the few gates connecting them.
-Strikingly, a circuit with **no single cheap method as a whole** can split into
-halves that are each easy along a *different* axis — and each half is run on its own
-real engine: a **phase-exact CH-form stabilizer engine** (poly-time always, an `O(n·k)`
-object) for the Clifford half and a **free-fermion engine** (pairing matrix + Pfaffian
-amplitudes) for the matchgate half, both phase-exact so the cut recombines to the
-verified answer. And **amplitude-level recombination** is implemented: any single
-output amplitude comes from one CH-form amplitude (one GF(2) solve) + one Pfaffian +
-a branch sum — *no 2ⁿ vector is ever built* — so you compute only the outcomes you
-care about.
-
-## What's inside
-
-Nine worked examples, in six folders — [`free-fermion/`](free-fermion/) (the
-namesake), [`ising-phase-transition/`](ising-phase-transition/),
-[`network-reliability/`](network-reliability/),
-[`roster-counting/`](roster-counting/),
-[`simulator-router/`](simulator-router/), and
-[`hybrid-dispatcher/`](hybrid-dispatcher/):
-
-| example | what it shows (and why it matters) | the "impossible" done on silicon |
-|---|---|---|
-| [`ff_analog_twin.py`](free-fermion/ff_analog_twin.py) | **Simulate a quantum system** (a chain of magnetic spins) on an ordinary computer. Quantum systems are famously hard to simulate because the bookkeeping **doubles with every particle added** — this special **free-fermion** family sidesteps that. | a **2048-qubit** simulation in seconds — a state vector would need more numbers than there are atoms in the universe |
-| [`entanglement_entropy.py`](free-fermion/entanglement_entropy.py) | **Measure how entangled a quantum system is.** Entanglement is the **resource behind quantum computing** and the fingerprint of exotic phases of matter — and it normally needs the **full exponential state** to compute. | the entropy of a **512-qubit** chain in ~1 s, where brute force needs ~10¹⁵⁴ numbers |
-| [`lieb_robinson_lightcone.py`](free-fermion/lieb_robinson_lightcone.py) | **Watch how fast information spreads** through a quantum material. There's an emergent **"speed of light"** (the Lieb–Robinson bound) that caps how quickly a disturbance can travel — it **limits how fast quantum computers and quantum communication can ever be**. | exact to **256 qubits**, resolving signals **~10 orders of magnitude below** any sampling floor |
-| [`quantum_device_benchmark.py`](free-fermion/quantum_device_benchmark.py) | **Check whether a real quantum computer actually did what it claimed**, by comparing its output to an exact answer computed classically. Validating quantum hardware needs a **trusted reference** — which normally **doesn't exist at large sizes**. | certifying a **128-qubit** processor against a zero-error reference — no 2¹²⁸ state vector exists |
-| [`ising_phase_transition.py`](ising-phase-transition/ising_phase_transition.py) | **Compute exactly when a magnet abruptly loses its magnetism** as it's heated — a **phase transition**, like water boiling. The 2D Ising model is the textbook case, and it's exactly solvable *because it is secretly a **free-fermion system***. | the exact **critical temperature** and critical exponent (1/8), which simulation can only estimate with error bars |
-| [`network_reliability.py`](network-reliability/network_reliability.py) | **Compute the exact risk of a large simultaneous outage** in a planar utility/telecom grid when failures are **correlated** (a storm takes out neighbouring lines together). Assuming failures are independent **badly underestimates that risk**; sampling never sees the rare, costly tail. | the **exact** probability of a major outage, where Monte-Carlo reports **zero** |
-| [`roster_solution_space.py`](roster-counting/roster_solution_space.py) | **Count and audit *all* valid staff rosters at once** — how many exist, is the schedule forced, which assignment is a **single point of failure** — instead of just finding one. Schedulers return one answer; **the whole solution space is assumed too big to explore**. | the **exact** count of valid rosters — a ~**50-digit** number — in ~0.5 s, where enumeration could never finish |
-| [`simulator_router.py`](simulator-router/simulator_router.py) | **Given a quantum circuit, work out *which* of the methods above can simulate it cheaply** — by measuring how far it sits from each kind of "easy structure" (how many non-Clifford gates, how many interacting gates, how much entanglement). A **map from a problem to the right tool**, tying the whole landscape table together. | **routes each circuit to its cheapest simulator automatically** — and flags the ones where **no** classical method is cheap (the genuinely-quantum regime) |
-| [`hybrid_dispatcher.py`](hybrid-dispatcher/hybrid_dispatcher.py) | **Don't pick one simulator — cut the problem and route each piece to its own.** Cut a circuit into pieces, send each piece to *its* cheapest method and **run it there** — one half on a real **phase-aware stabilizer engine**, the other on a real **free-fermion engine** — paying only for the few gates that connect them (circuit cutting / the method Google used to verify Sycamore). A circuit with **no single cheap method** can split into halves that are each easy — along *different* axes. | the **exact** answer for a circuit that is hopeless as a whole — ~160× cheaper than brute force — verified to machine precision |
-
-## Quick start
-
-```bash
-pip install holant-tools numpy sympy   # the only dependencies
-
-cd free-fermion                  # quantum simulation (the free-fermion examples)
-python ff_analog_twin.py
-python entanglement_entropy.py
-python lieb_robinson_lightcone.py
-python quantum_device_benchmark.py
-
-cd ../ising-phase-transition     # the 2D Ising phase transition
-python ising_phase_transition.py
-
-cd ../network-reliability        # exact correlated-outage risk
-python network_reliability.py
-
-cd ../roster-counting            # count + certify a roster's whole solution space
-python roster_solution_space.py
-
-cd ../simulator-router           # pick the cheapest simulator for a given circuit
-python simulator_router.py
-python feasibility_advisor.py    # dev-friendly "can I run this, and how?" (no physics needed)
-
-cd ../hybrid-dispatcher          # split a circuit across simulators, pay for the cut
-python hybrid_dispatcher.py
+report = sc.compare(config_a, config_b, p_fail=0.05)
+print(report.explain())
+# -> "Configuration B is 90.2% more reliable (9.5e-3 vs 9.3e-4).
+#     This distinction is provably real (exact computation), not a sampling artefact."
 ```
 
-Each subfolder has its own README explaining the maths in plain terms and the
-honest scope.
+That comparison — sub-statistical-noise-floor, regulator-defensible, exact —
+**no off-the-shelf reliability tool can produce**, because their internal
+data models are structurally Monte-Carlo. This repo demonstrates the
+underlying capability across catastrophe modelling, network reliability,
+workflow audit, quantum simulation, and combinatorial counting.
+
+---
+
+## Read these in order if you're new
+
+| | doc | reader intent |
+|---|---|---|
+| 1 | **[`docs/getting-started.md`](docs/getting-started.md)** | *"teach me — 10 minutes, hands on"* |
+| 2 | **[`docs/originality.md`](docs/originality.md)** | *"what's genuinely new here?"* |
+| 3 | **[`docs/concepts/`](docs/concepts/)** | *"why does it work? what are the underlying ideas?"* |
+| 4 | **[`docs/cookbook/`](docs/cookbook/)** | *"how do I do task X?"* |
+| 5 | **[`docs/reference/`](docs/reference/)** | *"what's the API for component Y?"* |
+
+Plus: **[`docs/glossary.md`](docs/glossary.md)** for vocabulary,
+**[`docs/faq.md`](docs/faq.md)** for common questions.
+
+---
+
+## What this repo does, in one sentence
+
+It provides **runnable, brute-force-verified worked examples** of exact
+polynomial-time computation on combinatorial systems that the standard
+toolkit assumes intractable: the free-fermion / matchgate-Holant family.
+The simulators are exact (no truncation, no sampling, no statistical
+error). Each example states its honest scope and what to reach for when
+the structure runs out.
+
+## What's inside, at a glance
+
+| folder | what's in it | start with |
+|---|---|---|
+| [`pipeline-router/`](pipeline-router/) | the workflow-level routing framework + 13 worked examples + a friendly wrapper class | [`pipeline-router/easy.py`](pipeline-router/easy.py) |
+| [`hybrid-dispatcher/`](hybrid-dispatcher/) | cut a quantum circuit, route each piece to a different exact simulator | [`hybrid-dispatcher/hybrid_dispatcher.py`](hybrid-dispatcher/hybrid_dispatcher.py) |
+| [`simulator-router/`](simulator-router/) | given one circuit, name the cheapest classical simulator (or flag "genuinely quantum") | [`simulator-router/simulator_router.py`](simulator-router/simulator_router.py) |
+| [`free-fermion/`](free-fermion/) | the namesake: 2048-qubit free-fermion simulation, entanglement entropy, Lieb-Robinson lightcone, quantum-device benchmark | [`free-fermion/ff_analog_twin.py`](free-fermion/ff_analog_twin.py) |
+| [`ising-phase-transition/`](ising-phase-transition/) | exact 2D Ising phase transition via the Onsager free-fermion solution | [`ising-phase-transition/ising_phase_transition.py`](ising-phase-transition/ising_phase_transition.py) |
+| [`network-reliability/`](network-reliability/) | exact correlated-outage probability on a planar utility/telecom grid | [`network-reliability/network_reliability.py`](network-reliability/network_reliability.py) |
+| [`roster-counting/`](roster-counting/) | exact count + certification of the whole roster solution space | [`roster-counting/roster_solution_space.py`](roster-counting/roster_solution_space.py) |
+
+Each folder has its own README (a reference card pointing into [`docs/`](docs/)).
+
+## Honest scope
+
+This is **not** a general computational speedup. The framework's exact
+polynomial-time answers apply to combinatorial problems with the right
+structural shape: planar / bounded-genus / matchgate-family / GF(2)-affine.
+**Most problems don't have this shape.** Every example states plainly
+where the structure runs out and what to reach for instead (a general
+solver, a quantum computer, a sampling method). See
+[`docs/faq.md`](docs/faq.md) for what this *isn't* applicable to.
 
 ## Built on holant-tools
 
-The engine is [`holant-tools`](https://github.com/pcoz/holant-tools) — a Python
-toolkit for matchgate-Holant tractability (Pfaffian / FKT evaluation, the
-free-fermion simulator, exact counting, and a polynomial-time decision procedure
-for *whether* a given problem lies in the tractable corner). This repo is the
-worked-examples-and-applications companion to it.
+The mathematical engine is
+[`holant-tools`](https://github.com/pcoz/holant-tools) — Python primitives
+for matchgate-Holant tractability (Pfaffian / FKT, free-fermion simulator,
+exact counting, basis-aware matchgate rank, the dart-chain passage-arc
+formula, polynomial-time decision procedures). This repo is the
+worked-examples-and-applications companion.
 
 ## License
 
-See [`LICENSE`](LICENSE) — modeled on the MIT License with an attribution clause.
-Free to use; visible attribution to **Edward Chalk (sapientronic.ai)** is required
-for publications, presentations, derivative works, and products.
+See [`LICENSE`](LICENSE) — modelled on the MIT License with an attribution
+clause. Free to use; visible attribution to **Edward Chalk
+(sapientronic.ai)** is required for publications, presentations,
+derivative works, and products.
