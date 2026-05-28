@@ -64,15 +64,26 @@ the structure runs out.
 
 Each folder has its own README (a reference card pointing into [`docs/`](docs/)).
 
-## Honest scope
+## Scope
 
-This is **not** a general computational speedup. The framework's exact
-polynomial-time answers apply to combinatorial problems with the right
-structural shape: planar / bounded-genus / matchgate-family / GF(2)-affine.
-**Most problems don't have this shape.** Every example states plainly
-where the structure runs out and what to reach for instead (a general
-solver, a quantum computer, a sampling method). See
-[`docs/faq.md`](docs/faq.md) for what this *isn't* applicable to.
+The framework's exact polynomial-time answers apply natively to problems
+with the right structural shape: planar / bounded-genus / matchgate-family
+/ GF(2)-affine. Many problems that don't *look* like this shape can be
+beaten into it — via **reductions** (crossing-elimination gadgets, basis
+changes, parity-split, high-degree-vertex splitting, hybrid decomposition,
+semiring choice), **compositions** (linear combinations of in-family
+evaluations, projections of joint distributions, holographic-basis pairs,
+branch-sum recombinations), and **recursive decomposition**
+(tree-decomposition / treewidth-bounded dynamic programming, planar-
+separator divide-and-conquer, tensor-network contraction in the right
+order, Shannon expansion, circuit-cutting with per-block recursive
+routing). The reduction / composition / recursive-decomposition layer is
+an active development direction.
+
+Every example states plainly where the structure currently runs out and
+what to reach for instead (a general solver, a quantum computer, a
+sampling method) — and the FAQ explains the active work on widening that
+boundary. See [`docs/faq.md`](docs/faq.md).
 
 ## Built on holant-tools
 

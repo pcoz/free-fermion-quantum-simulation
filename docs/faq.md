@@ -45,25 +45,69 @@ Concrete examples:
 For each, the framework dispatches to the right exact-evaluation kernel
 automatically. See [`concepts/tier-hierarchy.md`](concepts/tier-hierarchy.md).
 
-## What problems CAN'T the framework solve exactly?
+## What problems doesn't the framework natively solve exactly (and what's being done about it)?
 
-These structurally don't fit the matchgate-Holant family and the framework
-will route them to "advised: external solver":
+A problem that doesn't *look* matchgate-Holant at first glance is often
+**reducible to** one that does, or **composable from** multiple in-family
+ones. The framework's reduction-and-composition layer is the active
+development direction. Currently-native shapes:
 
-- **Continuous-variable problems.** Real-valued optimisation, PDEs,
-  control theory, anything intrinsically non-combinatorial.
-- **Non-planar, high-genus graphs.** Polynomial in `4^g`; intractable for
-  large genus.
-- **General SAT / NP-hard problems.** Use CP-SAT, Gurobi, SAT solvers.
-- **Most ML / statistics problems.** No rare-event combinatorial
-  structure to exploit.
-- **Permanent-class counting beyond matchgate-realisable.** Full bipartite
-  permanent is #P-hard.
-- **mod-p arithmetic for p ≠ 2.** Different complexity-theoretic territory.
+**In-family today (T0-T4) — exact, poly-time:**
+- GF(2)-affine and GF(2)-quadratic constraints.
+- Planar binary Holant.
+- Higher-arity symmetric signatures (basis-aware rank ≤ 2).
+- Bounded-genus Holant.
 
-If you try to force-fit a problem outside the family, the classifier
-emits **T7 (out-of-family)** and the router routes to advised mode. No
-false answer.
+**Reducible to in-family (active work):**
+- **Near-planar graphs** (a few crossings): crossing-elimination gadgets
+  replace each crossing with a small planar sub-graph → reduces to T2.
+- **High-degree vertices**: split into planar trees of degree-3 vertices →
+  classifier-friendly.
+- **Non-symmetric signatures**: basis-change machinery (the basis-aware
+  rank-2 result already handles symmetric; degree-3+ Plücker is pending
+  in holant-tools).
+- **Cardinality / threshold constraints**: parity-split decomposition.
+- **Real-valued weights**: rationalise + work in F_p, or discretise with
+  provable error bounds.
+
+**Composable from in-family (active work):**
+- **Linear combinations** of in-family signatures → many non-matchgate
+  signatures fall out.
+- **Projections of joint distributions** from two in-family Holants →
+  some permanent-class quantities.
+- **Holographic basis pairs** (Valiant 2004): two matchgates with
+  coordinated bases compute things neither could alone.
+- **Branch-sum recombinations**: already in `hybrid-dispatcher/` for
+  circuit cutting; generalises.
+
+**Recursively decomposable into in-family (active work):**
+- **Tree-decomposition / treewidth-bounded dynamic programming**: a
+  graph with bounded treewidth solved exactly by recursing on its
+  tree-decomposition, with each bag as an in-family Holant.
+- **Planar-separator divide-and-conquer**: split a planar graph at its
+  separator, solve each half recursively, combine via the boundary.
+- **Tensor-network contraction order**: contract in the right order so
+  every intermediate is in-family.
+- **Shannon expansion**: branch on a variable, recurse on each branch;
+  base case is an in-family fragment.
+- **Circuit cutting with per-block recursive routing**: the hybrid-
+  dispatcher's pattern lifted to N-way splits and recursive sub-cuts.
+
+**Genuinely beyond reach (honest stop, advisor recommendation):**
+- **Truly continuous-variable problems** with no discretisation: real-
+  valued optimisation, PDEs, control theory.
+- **mod-p arithmetic for p ≠ 2** with no reduction: different
+  complexity-theoretic territory (the Cai-Lu SRP solver applies, in the
+  private research repo).
+- **Permanent-class counting** with no known decomposition or
+  composition.
+
+If a problem is in-family today, the classifier emits T0-T4 and you get an
+exact answer. If it's currently outside-family, the classifier emits T7
+and the framework advises an external solver — **without producing a
+false answer**. As the reduction/composition layer matures, more T7
+problems will become "T2 via reduction X" or "T2-composed via
+construction Y".
 
 ## How does this compare to a quantum computer?
 
