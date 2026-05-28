@@ -32,6 +32,7 @@ compatible with the richer trace.py extension.
 Run:  python pipeline_router.py     # runs the built-in self_test().
 """
 import dataclasses
+import math
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 
@@ -98,8 +99,25 @@ class Trace:
             out[key] = out.get(key, 0) + 1
         return out
 
-    def total_cost(self) -> float:
+    def total_log_budget(self) -> float:
+        """Sum of per-stage log2-costs. A budget-like complexity score (NOT
+        the log of total operations -- summing log2(x) gives log2(prod x),
+        not log2(sum x)). For the actual total-operations cost across a
+        sequential pipeline use `total_ops_cost`."""
         return sum(r.route.cost for r in self.records)
+
+    def total_ops_cost(self) -> float:
+        """log2 of the SUM of per-stage operations (the meaningful "how many
+        ops total" cost for a sequential pipeline). Returns +inf if any
+        stage was advised (cost = +inf)."""
+        if any(math.isinf(r.route.cost) for r in self.records):
+            return math.inf
+        if not self.records:
+            return 0.0
+        # log2(sum 2^c_i) computed in a numerically stable way.
+        cs = [r.route.cost for r in self.records]
+        cmax = max(cs)
+        return cmax + math.log2(sum(2.0 ** (c - cmax) for c in cs))
 
     def regime_changes(self) -> List[int]:
         """Indices i where records[i].route.member differs from records[i-1].
@@ -236,7 +254,20 @@ def self_test():
     assert trace.regime_changes() == [], "spurious regime changes on constant member"
     print("  [streaming driver: 1000 stages via generator, trace complete, no spurious regime changes]")
 
-    # 4) A pipeline whose route MEMBER alternates -- regime_changes must catch it.
+    # 4a) Cost semantics. Two stages costing log2 = 3 each (so 8 + 8 = 16 ops).
+    #     total_log_budget is 6.0 (sum of logs); total_ops_cost is 4.0 (log2(16)).
+    def fixed_route(data, prev):
+        return Route(member="m", cost=3.0)
+    def identity_runner(data, prev, route):
+        return prev
+    pair = [Stage("a", "k", None, fixed_route, identity_runner),
+            Stage("b", "k", None, fixed_route, identity_runner)]
+    _, t = run_pipeline(pair, seed=0)
+    assert abs(t.total_log_budget() - 6.0) < 1e-9, t.total_log_budget()
+    assert abs(t.total_ops_cost() - 4.0) < 1e-9, t.total_ops_cost()
+    print("  [Trace cost semantics: total_log_budget=6.0 sums logs; total_ops_cost=4.0 = log2(8+8)]")
+
+    # 4b) A pipeline whose route MEMBER alternates -- regime_changes must catch it.
     def alternating_route(data, prev):
         return Route(member="free-fermion" if data % 2 == 0 else "stabilizer",
                      cost=1.0, tier=("T0" if data % 2 == 0 else "T2"))
