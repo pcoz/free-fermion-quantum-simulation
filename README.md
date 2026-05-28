@@ -168,12 +168,13 @@ exact, in [`hybrid-dispatcher/`](hybrid-dispatcher/): it cuts a circuit into pie
 routes each piece independently, and pays only for the few gates connecting them.
 Strikingly, a circuit with **no single cheap method as a whole** can split into
 halves that are each easy along a *different* axis — and each half is run on its own
-real engine: a **phase-aware stabilizer engine** for the Clifford half and a
-**free-fermion engine** (pairing matrix + Pfaffian amplitudes) for the matchgate
-half, both phase-exact so the cut recombines to the verified answer. And
-**amplitude-level recombination** is implemented: any single output amplitude comes
-from one stabilizer lookup + one Pfaffian + a branch sum — *no 2ⁿ vector is ever
-built* — so you compute only the outcomes you care about.
+real engine: a **phase-exact CH-form stabilizer engine** (poly-time always, an `O(n·k)`
+object) for the Clifford half and a **free-fermion engine** (pairing matrix + Pfaffian
+amplitudes) for the matchgate half, both phase-exact so the cut recombines to the
+verified answer. And **amplitude-level recombination** is implemented: any single
+output amplitude comes from one CH-form amplitude (one GF(2) solve) + one Pfaffian +
+a branch sum — *no 2ⁿ vector is ever built* — so you compute only the outcomes you
+care about.
 
 ## What's inside
 

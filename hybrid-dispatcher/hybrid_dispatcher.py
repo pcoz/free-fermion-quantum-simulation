@@ -35,10 +35,12 @@ The engines, and why they are phase-aware
 The recombination sums |psi_A> (x) |psi_B> over branches, so each block state must
 carry its correct GLOBAL phase, or the branches interfere wrongly.
 
-* Stabilizer (block A): the explicit stabilizer-superposition representation -- the
-  state as its sparse amplitudes over the affine support. Phase-exact; compresses to
-  2^(support) (block A spreads over 2^3, not 2^10). For the poly-time-ALWAYS variant
-  (O(n*k) regardless of Hadamard count) see the companion module `ch_form.py`.
+* Stabilizer (block A): the CH / affine-quadratic form (see `ch_form.py`). The state
+  is carried in an O(n*k) object -- the n x k support matrix G, the n-bit offset b,
+  the length-k linear phase, the strict-upper quadratic phase, and the exact global
+  phase omega -- and updated in polynomial time for X, Z, S, CX, CZ, and H ANYWHERE.
+  Per-amplitude readout is one GF(2) solve. Phase-exact (global phase tracked
+  exactly), poly-time ALWAYS -- the carried object never materialises the 2^k support.
 * Free fermion (block B): the FERMIONIC GAUSSIAN representation -- the m x m pairing
   matrix A with |psi> proportional to exp(1/2 sum A_ij a_i^dag a_j^dag)|0> (Thouless
   form). Matchgates update A in closed form (number-conserving gates by congruence
@@ -50,7 +52,7 @@ carry its correct GLOBAL phase, or the branches interfere wrongly.
 
 Amplitude-level recombination (the asymptotic win): `build_amplitude_oracle` returns a
 function giving any single output amplitude <x|U_full|0> with NO 2^n vector ever built
--- it factorises into one stabilizer-amplitude lookup, one Pfaffian (block B), and a
+-- it factorises into one CH-form amplitude lookup, one Pfaffian (block B), and a
 sum over the few branches, all polynomial. So you compute only the outcomes you want.
 
 Both engines are validated by self-tests against the universal backend on random
@@ -60,9 +62,10 @@ Run:  python hybrid_dispatcher.py
 """
 import itertools
 import math
-from collections import defaultdict
 
 import numpy as np
+
+from ch_form import CHForm
 
 
 # --- a minimal, correct state-vector backend (brute force) --------------------
@@ -116,70 +119,42 @@ def pair_gate(theta):
     return np.array([[c, 0, 0, -1j * s], [0, 1, 0, 0], [0, 0, 1, 0], [-1j * s, 0, 0, c]], dtype=complex)
 
 
-# --- phase-aware stabilizer engine (explicit-superposition representation) ----
-class StabilizerSim:
-    """Phase-EXACT Clifford simulator: state as sparse amplitudes over the affine
-    stabilizer support (a dict {basis state -> amplitude}). Applying the real gate
-    actions keeps the GLOBAL phase exact, which a bare tableau loses."""
-
-    def __init__(self, m):
-        self.m, self.amp = m, {0: 1.0 + 0j}
-
-    def _mask(self, q):
-        return 1 << (self.m - 1 - q)
-
-    def _bit(self, x, q):
-        return (x >> (self.m - 1 - q)) & 1
-
-    def apply(self, name, qs):
-        if name == "I":
-            return
-        if name in ("Z", "S"):
-            f = 1j if name == "S" else -1
-            for x in self.amp:
-                if self._bit(x, qs[0]):
-                    self.amp[x] *= f
-        elif name in ("X", "Y"):
-            mask = self._mask(qs[0])
-            self.amp = {x ^ mask: (1j * (-1) ** self._bit(x, qs[0]) if name == "Y" else 1) * a
-                        for x, a in self.amp.items()}
-        elif name in ("CX", "CNOT"):
-            cm, tm = self._mask(qs[0]), self._mask(qs[1])
-            self.amp = {(x ^ tm if x & cm else x): a for x, a in self.amp.items()}
-        elif name == "CZ":
-            for x in self.amp:
-                if self._bit(x, qs[0]) and self._bit(x, qs[1]):
-                    self.amp[x] *= -1
-        elif name == "H":
-            mask, inv = self._mask(qs[0]), 1.0 / math.sqrt(2)
-            new = defaultdict(complex)
-            for x, a in self.amp.items():
-                sign = -1 if (x & mask) else 1
-                new[x & ~mask] += a * inv
-                new[x | mask] += a * inv * sign
-            self.amp = {x: a for x, a in new.items() if abs(a) > 1e-12}
-
-    def amplitude(self, x):
-        """A single amplitude <x|psi> -- just a lookup in the (sparse) support."""
-        return self.amp.get(x, 0.0 + 0j)
-
-    def statevector(self):
-        psi = np.zeros(2 ** self.m, dtype=complex)
-        for x, a in self.amp.items():
-            psi[x] = a
-        return psi
-
-
-def stab_engine(m, named_ops):
-    sim = StabilizerSim(m)
+# --- phase-aware stabilizer engine (CH / affine-quadratic form) --------------
+# The state is held in the CH form by `ch_form.CHForm`: an O(n*k) object (the n x k
+# support matrix G, offset b, length-k linear phase, strict-upper quadratic phase,
+# and exact global phase omega) that is updated in polynomial time for X, Z, S, CX,
+# CZ, and H ANYWHERE -- including on already-entangled qubits. Per-amplitude readout
+# is one GF(2) solve. Phase-exact, and never materialises the 2^k support. The Y gate
+# is supported via Y = iXZ for completeness, though the demo's block A does not use it.
+def ch_engine(m, named_ops):
+    """Build a CHForm on m qubits and apply a list of (gate_name, qubits) ops to it.
+    Returns the live CHForm: use .amp(x) for one amplitude, .statevector() for all."""
+    ch = CHForm(m)
     for name, qs in named_ops:
-        sim.apply(name, qs)
-    return sim
+        if name == "I":
+            continue
+        if name == "X":
+            ch.x(qs[0])
+        elif name == "Y":                            # Y = i X Z (apply Z, then X, then phase)
+            ch.z(qs[0]); ch.x(qs[0]); ch.omega *= 1j
+        elif name == "Z":
+            ch.z(qs[0])
+        elif name == "S":
+            ch.s(qs[0])
+        elif name == "H":
+            ch.h(qs[0])
+        elif name in ("CX", "CNOT"):
+            ch.cx(qs[0], qs[1])
+        elif name == "CZ":
+            ch.cz(qs[0], qs[1])
+        else:
+            raise ValueError(f"ch_engine: unsupported block-A gate {name!r}")
+    return ch
 
 
-def run_stabilizer(m, named_ops):
-    sim = stab_engine(m, named_ops)
-    return sim.statevector(), len(sim.amp)
+def run_chform(m, named_ops):
+    ch = ch_engine(m, named_ops)
+    return ch.statevector(), ch.k
 
 
 # --- free-fermion engine (fermionic Gaussian / pairing-matrix representation) -
@@ -371,11 +346,11 @@ def _branches(crossing):
 def simulate_by_cutting(n, circuit):
     """Cut the circuit down the middle, route and run each block on its own engine,
     and recombine to the FULL exact state. Because the injected factors are diagonal,
-    each block's base state is computed ONCE (block A on the stabilizer engine, block B
+    each block's base state is computed ONCE (block A on the CH-form engine, block B
     on the free-fermion engine) and every branch is a cheap +-1 sign mask times it."""
     cut, aNamed, bParam, aNames, bNames, crossing = _partition(n, circuit)
     routeA, routeB = route_block(aNames, cut), route_block(bNames, n - cut)
-    phiA, supportA = run_stabilizer(cut, aNamed)        # block A base state, once
+    phiA, kA = run_chform(cut, aNamed)                  # block A base state, once
     phiB = run_freefermion(n - cut, bParam)             # block B base state, once
 
     full = np.zeros(2 ** cut * 2 ** (n - cut), dtype=complex)
@@ -383,7 +358,7 @@ def simulate_by_cutting(n, circuit):
         full += coeff * np.kron(_sign_mask(cut, za) * phiA, _sign_mask(n - cut, zb) * phiB)
 
     return {"state": full, "branches": len(_branches(crossing)), "n_crossing": len(crossing),
-            "routeA": routeA, "routeB": routeB, "supportA": supportA}
+            "routeA": routeA, "routeB": routeB, "kA": kA}
 
 
 def build_amplitude_oracle(n, circuit):
@@ -395,18 +370,19 @@ def build_amplitude_oracle(n, circuit):
 
         <x|U_full|0> = alpha_A(x_A) * alpha_B(x_B) * sum_branches coeff * (+-1 signs),
 
-    where alpha_A(x_A) = <x_A|C_A|0> is one stabilizer-amplitude lookup, alpha_B(x_B)
-    = <x_B|U_B|0> is ONE Pfaffian over the occupied modes of x_B, and the branch sum is
-    over the (few) crossing branches. Each call is polynomial; no 2^n state ever exists."""
+    where alpha_A(x_A) = <x_A|C_A|0> is one CH-form amplitude (one GF(2) solve over
+    the n_A x k support matrix), alpha_B(x_B) = <x_B|U_B|0> is ONE Pfaffian over the
+    occupied modes of x_B, and the branch sum is over the (few) crossing branches. Each
+    call is polynomial; no 2^n state ever exists."""
     cut, aNamed, bParam, aNames, bNames, crossing = _partition(n, circuit)
-    stab = stab_engine(cut, aNamed)             # provides alpha_A via .amplitude
+    ch = ch_engine(cut, aNamed)                 # provides alpha_A via .amp (one GF(2) solve)
     ff = ff_engine(n - cut, bParam)             # provides alpha_B via .amplitude (one Pfaffian)
     branches = _branches(crossing)
     nB = n - cut
 
     def amp(x):
         xA, xB = x >> nB, x & ((1 << nB) - 1)   # split the global index into A and B bits
-        aA = stab.amplitude(xA)
+        aA = ch.amp(xA)
         if aA == 0:
             return 0.0 + 0j
         aB = ff.amplitude(xB)
@@ -463,19 +439,21 @@ def two_natured_circuit(n, seed=0):
 
 
 def self_test():
-    """Validate both engines against the universal backend on random circuits."""
+    """Validate both engines against the universal backend on random circuits. The
+    CH-form itself is exhaustively self-tested in `ch_form.py` (1500 random circuits,
+    H anywhere); here we additionally check the dispatcher's adapter wiring."""
     rng = np.random.default_rng(1)
     cliff = {"H": H, "S": S, "X": PX, "Y": PY, "Z": PZ, "CX": CNOT, "CZ": CZ}
-    for _ in range(150):                               # stabilizer engine
+    for _ in range(150):                               # CH-form engine via adapter
         m = int(rng.integers(2, 6))
         named, mats = [], []
         for _ in range(int(rng.integers(5, 25))):
             g = str(rng.choice(["H", "S", "X", "Y", "Z", "CX", "CZ"]))
             qs = tuple(int(x) for x in rng.choice(m, size=(2 if g in ("CX", "CZ") else 1), replace=False))
             named.append((g, qs)); mats.append((cliff[g], qs))
-        vec, _ = run_stabilizer(m, named)
-        assert np.allclose(vec, run_statevector(m, mats), atol=1e-10), "stabilizer mismatch!"
-    print("  [stabilizer engine: phase-exact on 150 random Clifford circuits]")
+        vec, _ = run_chform(m, named)
+        assert np.allclose(vec, run_statevector(m, mats), atol=1e-10), "CH-form mismatch!"
+    print("  [stabilizer engine (CH-form): phase-exact on 150 random Clifford circuits]")
 
     for _ in range(150):                               # free-fermion engine
         m = int(rng.integers(2, 7))
@@ -528,8 +506,8 @@ def main():
     (mA, cA, meA), (mB, cB, meB) = out["routeA"], out["routeB"]
     print(f"\n  Cut into two halves of {cut} qubits and route EACH:")
     print(f"    block A (qubits 0..{cut-1}):  -> {mA.upper():<13} (t={meA['t']}, k={meA['k']})"
-          f"  -- RUN on the STABILIZER engine, support 2^{int(round(math.log2(out['supportA'])))} "
-          f"= {out['supportA']} (not 2^{cut})")
+          f"  -- RUN on the CH-FORM stabilizer engine, carried in {cut}x{out['kA']} matrix "
+          f"(k={out['kA']} free bits, never the 2^{out['kA']} support)")
     print(f"    block B (qubits {cut}..{n-1}): -> {mB.upper():<13} (t={meB['t']}, k={meB['k']})"
           f"  -- RUN on the FREE-FERMION engine (m x m pairing matrix + Pfaffians)")
     print(f"    + {out['n_crossing']} crossing CZ gate(s), Pauli-decomposed  ->  {out['branches']} branches")
@@ -540,11 +518,11 @@ def main():
     assert ok, "hybrid result did not match brute force!"
 
     brute, whole_cost = 2 ** n, 2 ** whole[1]
-    cut_cost = out["branches"] * (out["supportA"] + 2 ** cB)
+    cut_cost = out["branches"] * (2 ** out["kA"] + 2 ** cB)
     print("\n  Cost (operations, order of magnitude):")
     print(f"    brute force ................... 2^{n} = {brute:,.0f}")
     print(f"    route the whole circuit ....... ~ {whole_cost:,.0f}")
-    print(f"    cut + route each half ......... {out['branches']} x (2^{int(round(math.log2(out['supportA'])))} "
+    print(f"    cut + route each half ......... {out['branches']} x (2^{out['kA']} "
           f"+ 2^{cB:.1f}) = {cut_cost:,.0f}   ({brute / cut_cost:.0f}x less than brute force)")
 
     # --- amplitude-level recombination: any single outcome, no 2^n vector ----
@@ -572,10 +550,11 @@ def main():
     print("=" * 74)
     print("  A circuit with no single cheap method splits into pieces that are each")
     print("  cheap -- along DIFFERENT axes. The dispatcher cuts, routes every piece to")
-    print("  its own member, and runs it there: block A on a phase-aware stabilizer")
-    print("  engine, block B on a free-fermion (pairing-matrix + Pfaffian) engine. Both")
-    print("  are phase-exact, and amplitude-level recombination delivers any individual")
-    print("  outcome in polynomial work -- the cut never builds a 2^n vector at all.")
+    print("  its own member, and runs it there: block A on a phase-exact CH-form")
+    print("  stabilizer engine (O(n*k) object, poly-time always), block B on a free-")
+    print("  fermion (pairing-matrix + Pfaffian) engine. Both are phase-exact, and")
+    print("  amplitude-level recombination delivers any individual outcome in polynomial")
+    print("  work -- the cut never builds a 2^n vector at all.")
 
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
 r"""A poly-time, phase-EXACT stabilizer simulator (CH / affine-quadratic form).
 
-The dispatcher's explicit-superposition stabilizer engine is phase-exact but its cost
-grows with the stabilizer support (2^k), so it is only cheap for low-Hadamard blocks.
-This module is the poly-time-ALWAYS upgrade: it stores a stabilizer state in the
-affine-quadratic ("CH") form
+The hybrid dispatcher's block-A engine. A naive sparse-amplitude stabilizer simulator
+is phase-exact but materialises the 2^k support, so it is only cheap for low-Hadamard
+blocks. This module is the poly-time-ALWAYS replacement: it stores a stabilizer state
+in the affine-quadratic ("CH") form
 
     |psi> = omega * 2^(-k/2) * sum_{y in {0,1}^k}  i^(lin . y)  (-1)^(quad(y))  |b XOR G y>,
 
@@ -33,7 +33,9 @@ phases), both polynomial. Validated against a state-vector backend on 1500 rando
 Clifford circuits (500 of them with H anywhere), exactly, global phase included.
 
 The point: a phase-exact stabilizer state is carried in a polynomial O(n*k) object,
-never the 2^k support the dispatcher's explicit-superposition engine materialises.
+and amplitudes are read off in poly-time by a single GF(2) solve -- the 2^k support
+is never built. The dispatcher calls this via a thin `ch_engine` adapter in
+`hybrid_dispatcher.py`.
 """
 import math
 

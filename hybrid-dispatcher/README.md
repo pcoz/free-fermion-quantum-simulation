@@ -44,9 +44,14 @@ correct **global phase**, or the branches interfere wrongly. A bare stabilizer
 tableau (or a bare covariance matrix) is poly-time but fixes the state only up to a
 global phase — exactly the information the cut needs. So both engines track it:
 
-- **Stabilizer (block A)** — the explicit stabilizer-superposition representation:
-  the state as its sparse amplitudes over the affine support. Phase-exact, and
-  compresses to `2^(support)` (block A spreads over `2^3`, not `2^10`).
+- **Stabilizer (block A)** — the **CH / affine-quadratic form** (see
+  [`ch_form.py`](ch_form.py)). The state is carried in an `O(n·k)` object — the `n × k`
+  support matrix `G`, the offset `b`, the length-`k` linear phase, the strict-upper
+  quadratic phase, and the exact global phase `ω` — and updated in polynomial time for
+  `X, Z, S, CX, CZ`, and **`H` anywhere** (including on an already-entangled qubit, the
+  delicate core of the CH-form). Per-amplitude readout is **one GF(2) solve**.
+  Phase-exact, **poly-time always** — the carried object never materialises the `2^k`
+  support. (Block A in the demo lives in `k = 3` free bits: a `10 × 3` matrix.)
 - **Free fermion (block B)** — the fermionic Gaussian representation: the `m × m`
   pairing matrix `A` with `|ψ> ∝ exp(½ Σ A_ij a†_i a†_j)|0>`. Matchgates update `A` in
   closed form (number-conserving gates by congruence `A → W A Wᵀ`; an initial
@@ -63,15 +68,17 @@ The demo circuit is a **Clifford half welded to a free-fermion half**, plus two 
 crossing gates, on 20 qubits:
 
 ```
-[stabilizer engine: phase-exact on 150 random Clifford circuits]
+[stabilizer engine (CH-form): phase-exact on 150 random Clifford circuits]
 [free-fermion engine: phase-exact on 150 random matchgate circuits]
 
 Route the WHOLE circuit:  -> STABILIZER   (t=25, k=19; best single method, cost ~ 2^14.4)
   No single method is polynomial on the whole.
 
 Cut into two halves and route EACH:
-  block A (0..9):   -> STABILIZER    (t=0)  -- RUN on the stabilizer engine, support 2^3 = 8 (not 2^10)
-  block B (10..19): -> FREE FERMION  (k=0)  -- RUN on the free-fermion engine (pairing matrix + Pfaffians)
+  block A (0..9):   -> STABILIZER    (t=0)  -- RUN on the CH-FORM stabilizer engine,
+                                                carried in a 10x3 matrix (k=3 free bits)
+  block B (10..19): -> FREE FERMION  (k=0)  -- RUN on the free-fermion engine
+                                                (pairing matrix + Pfaffians)
   + 2 crossing CZ gates, Pauli-decomposed  ->  16 branches
 
 Exact match with brute force: True
@@ -90,26 +97,26 @@ structure invisible in the whole circuit: each half is cheap under a different m
 Circuit cutting is exact and general, but its cost is **multiplicative in the number
 of crossing gates** (branches grow with each crossing gate's Pauli rank), so it wins
 when the cut is narrow — the regime the router's entanglement meter `w` detects. Both
-engines are phase-exact, and their *compact* objects are poly (the stabilizer support
-and the `m × m` pairing matrix).
+engines are phase-exact, and their carried objects are poly: an `O(n·k)` CH-form for
+block A (never the `2^k` support), and the `m × m` pairing matrix for block B.
 
-**A poly-time-always stabilizer engine is in [`ch_form.py`](ch_form.py).** The block-A
-engine above is phase-exact but its cost scales with the stabilizer support (`2^k`),
-so it is only cheap for low-Hadamard blocks. `ch_form.py` carries the *same* phase-exact
-state in the affine-quadratic (CH) form — an `O(n·k)` matrix, never the `2^k` support —
-and updates it in polynomial time for `X, Z, S, CX, CZ` and **`H` anywhere** (including
-on an already-entangled qubit, the delicate core of the CH-form, handled by evaluating
-the new amplitude function and re-fitting the form — both polynomial). A self-test
-checks it against a state-vector backend on **1500 random Clifford circuits** (H in any
-position), exactly, global phase included. So a stabilizer block costs `O(n·k)`
-regardless of how many Hadamards it has.
+**Block A's engine, in detail.** The CH-form engine lives in
+[`ch_form.py`](ch_form.py); the dispatcher calls it via the small `ch_engine` adapter
+in `hybrid_dispatcher.py`. It carries the affine-quadratic state in `O(n·k)` and
+updates it in polynomial time for `X, Z, S, CX, CZ` and **`H` anywhere** (including on
+an already-entangled qubit — handled by evaluating the new amplitude function from the
+old form and re-fitting the affine-quadratic data, both polynomial). `ch_form.py`'s own
+self-test validates it against a state-vector backend on **1500 random Clifford
+circuits** (H in any position), exactly, global phase included; the dispatcher
+additionally checks the adapter wiring on **150 random Clifford circuits**. So a
+stabilizer block costs `O(n·k)` regardless of how many Hadamards it has.
 
 **Amplitude-level recombination (the asymptotic win) is implemented.** Beyond building
 the full state, the script also exposes `build_amplitude_oracle`, which returns a
 function `amp(x)` giving any single output amplitude `<x|U|0>` with **no 2ⁿ vector
 ever built**: it factorises as `α_A(x_A)·α_B(x_B)·Σ_branches(coeff·signs)`, where
-`α_A` is one stabilizer-amplitude lookup, `α_B` is **one Pfaffian** over the occupied
-modes of `x_B`, and the branch sum is over the few crossing branches — all polynomial
-per amplitude. A run checks a sample of these against brute force exactly. So you can
-compute just the outcomes you care about (e.g. the most likely ones), where brute
-force must first build all 2ⁿ amplitudes.
+`α_A` is one CH-form amplitude (one GF(2) solve), `α_B` is **one Pfaffian** over the
+occupied modes of `x_B`, and the branch sum is over the few crossing branches — all
+polynomial per amplitude. A run checks a sample of these against brute force exactly.
+So you can compute just the outcomes you care about (e.g. the most likely ones), where
+brute force must first build all 2ⁿ amplitudes.
